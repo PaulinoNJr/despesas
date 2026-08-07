@@ -44,12 +44,41 @@ create table if not exists public.bill_payments (
 alter table public.people alter column owner_id set default auth.uid();
 alter table public.bills alter column owner_id set default auth.uid();
 
+-- Tipos e categorias agora sao cadastraveis pelo usuario, sem limitar aos dois
+-- valores iniciais. NOT VALID preserva registros antigos; novos dados ja seguem a regra.
+alter table public.bills drop constraint if exists bills_type_check;
+alter table public.bills drop constraint if exists bills_category_check;
+alter table public.bills add constraint bills_type_check check (char_length(trim(type)) between 1 and 60) not valid;
+alter table public.bills add constraint bills_category_check check (char_length(trim(category)) between 1 and 60) not valid;
+alter table public.people drop constraint if exists people_name_check;
+alter table public.people drop constraint if exists people_color_check;
+alter table public.bills drop constraint if exists bills_name_check;
+alter table public.expense_categories drop constraint if exists expense_categories_name_check;
+alter table public.expense_categories drop constraint if exists expense_categories_color_check;
+alter table public.expense_types drop constraint if exists expense_types_name_check;
+alter table public.people add constraint people_name_check check (char_length(trim(name)) between 1 and 80) not valid;
+alter table public.people add constraint people_color_check check (color ~ '^#[0-9A-Fa-f]{6}$') not valid;
+alter table public.bills add constraint bills_name_check check (char_length(trim(name)) between 1 and 120) not valid;
+alter table public.expense_categories add constraint expense_categories_name_check check (char_length(trim(name)) between 1 and 60) not valid;
+alter table public.expense_categories add constraint expense_categories_color_check check (color ~ '^#[0-9A-Fa-f]{6}$') not valid;
+alter table public.expense_types add constraint expense_types_name_check check (char_length(trim(name)) between 1 and 60) not valid;
+
 alter table public.people enable row level security;
 alter table public.bills enable row level security;
 alter table public.income_payments enable row level security;
 alter table public.expense_categories enable row level security;
 alter table public.expense_types enable row level security;
 alter table public.bill_payments enable row level security;
+
+alter table public.people force row level security;
+alter table public.bills force row level security;
+alter table public.income_payments force row level security;
+alter table public.expense_categories force row level security;
+alter table public.expense_types force row level security;
+alter table public.bill_payments force row level security;
+
+revoke all on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments from anon;
+grant select, insert, update, delete on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments to authenticated;
 
 drop policy if exists "people_owner_only" on public.people;
 drop policy if exists "bills_owner_only" on public.bills;
@@ -66,12 +95,24 @@ create policy "people_owner_only" on public.people
 create policy "bills_owner_only" on public.bills
   for all to authenticated
   using ((select auth.uid()) = owner_id)
-  with check ((select auth.uid()) = owner_id);
+  with check (
+    (select auth.uid()) = owner_id
+    and (responsible is null or exists (
+      select 1 from public.people person
+      where person.id = responsible and person.owner_id = (select auth.uid())
+    ))
+  );
 
 create policy "income_payments_owner_only" on public.income_payments
   for all to authenticated
   using ((select auth.uid()) = owner_id)
-  with check ((select auth.uid()) = owner_id);
+  with check (
+    (select auth.uid()) = owner_id
+    and exists (
+      select 1 from public.people person
+      where person.id = person_id and person.owner_id = (select auth.uid())
+    )
+  );
 
 create policy "expense_categories_owner_only" on public.expense_categories
   for all to authenticated
@@ -87,3 +128,11 @@ create policy "payments_owner_only" on public.bill_payments
   for all to authenticated
   using (exists (select 1 from public.bills where bills.id = bill_payments.bill_id and bills.owner_id = (select auth.uid())))
   with check (exists (select 1 from public.bills where bills.id = bill_payments.bill_id and bills.owner_id = (select auth.uid())));
+
+create index if not exists people_owner_id_idx on public.people(owner_id);
+create index if not exists bills_owner_id_idx on public.bills(owner_id);
+create index if not exists bills_responsible_idx on public.bills(responsible);
+create index if not exists income_payments_owner_id_idx on public.income_payments(owner_id);
+create index if not exists income_payments_person_id_idx on public.income_payments(person_id);
+create index if not exists expense_categories_owner_id_idx on public.expense_categories(owner_id);
+create index if not exists expense_types_owner_id_idx on public.expense_types(owner_id);

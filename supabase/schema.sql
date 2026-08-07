@@ -5,21 +5,21 @@
 create table if not exists public.people (
   id uuid primary key,
   owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  name text not null,
+  name text not null check (char_length(trim(name)) between 1 and 80),
   salary numeric(12,2) not null check (salary >= 0),
   pay_day smallint not null check (pay_day between 1 and 31),
-  color text not null default '#7067cf',
+  color text not null default '#7067cf' check (color ~ '^#[0-9A-Fa-f]{6}$'),
   created_at timestamptz not null default now()
 );
 
 create table if not exists public.bills (
   id uuid primary key,
   owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  name text not null,
+  name text not null check (char_length(trim(name)) between 1 and 120),
   value numeric(12,2) not null check (value >= 0),
   due_day smallint not null check (due_day between 1 and 31),
-  type text not null check (type in ('Fixa', 'Flutuante')),
-  category text not null default 'Outros',
+  type text not null check (char_length(trim(type)) between 1 and 60),
+  category text not null default 'Outros' check (char_length(trim(category)) between 1 and 60),
   responsible uuid references public.people(id) on delete set null,
   created_at timestamptz not null default now()
 );
@@ -37,8 +37,8 @@ create table if not exists public.income_payments (
 create table if not exists public.expense_categories (
   id uuid primary key,
   owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  name text not null check (char_length(trim(name)) > 0),
-  color text not null default '#7067cf',
+  name text not null check (char_length(trim(name)) between 1 and 60),
+  color text not null default '#7067cf' check (color ~ '^#[0-9A-Fa-f]{6}$'),
   created_at timestamptz not null default now(),
   unique (owner_id, name)
 );
@@ -46,7 +46,7 @@ create table if not exists public.expense_categories (
 create table if not exists public.expense_types (
   id uuid primary key,
   owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  name text not null check (char_length(trim(name)) > 0),
+  name text not null check (char_length(trim(name)) between 1 and 60),
   created_at timestamptz not null default now(),
   unique (owner_id, name)
 );
@@ -69,6 +69,18 @@ alter table public.expense_categories enable row level security;
 alter table public.expense_types enable row level security;
 alter table public.bill_payments enable row level security;
 
+-- Impede que o dono da tabela ignore as politicas por acidente e evita acesso
+-- direto pelo papel anon. A service_role continua exclusiva para processos no servidor.
+alter table public.people force row level security;
+alter table public.bills force row level security;
+alter table public.income_payments force row level security;
+alter table public.expense_categories force row level security;
+alter table public.expense_types force row level security;
+alter table public.bill_payments force row level security;
+
+revoke all on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments from anon;
+grant select, insert, update, delete on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments to authenticated;
+
 drop policy if exists "people_owner_only" on public.people;
 drop policy if exists "bills_owner_only" on public.bills;
 drop policy if exists "income_payments_owner_only" on public.income_payments;
@@ -84,12 +96,24 @@ create policy "people_owner_only" on public.people
 create policy "bills_owner_only" on public.bills
   for all to authenticated
   using ((select auth.uid()) = owner_id)
-  with check ((select auth.uid()) = owner_id);
+  with check (
+    (select auth.uid()) = owner_id
+    and (responsible is null or exists (
+      select 1 from public.people person
+      where person.id = responsible and person.owner_id = (select auth.uid())
+    ))
+  );
 
 create policy "income_payments_owner_only" on public.income_payments
   for all to authenticated
   using ((select auth.uid()) = owner_id)
-  with check ((select auth.uid()) = owner_id);
+  with check (
+    (select auth.uid()) = owner_id
+    and exists (
+      select 1 from public.people person
+      where person.id = person_id and person.owner_id = (select auth.uid())
+    )
+  );
 
 create policy "expense_categories_owner_only" on public.expense_categories
   for all to authenticated
@@ -105,3 +129,12 @@ create policy "payments_owner_only" on public.bill_payments
   for all to authenticated
   using (exists (select 1 from public.bills where bills.id = bill_payments.bill_id and bills.owner_id = (select auth.uid())))
   with check (exists (select 1 from public.bills where bills.id = bill_payments.bill_id and bills.owner_id = (select auth.uid())));
+
+-- Indices para as consultas filtradas pelas politicas RLS e pelos relacionamentos.
+create index if not exists people_owner_id_idx on public.people(owner_id);
+create index if not exists bills_owner_id_idx on public.bills(owner_id);
+create index if not exists bills_responsible_idx on public.bills(responsible);
+create index if not exists income_payments_owner_id_idx on public.income_payments(owner_id);
+create index if not exists income_payments_person_id_idx on public.income_payments(person_id);
+create index if not exists expense_categories_owner_id_idx on public.expense_categories(owner_id);
+create index if not exists expense_types_owner_id_idx on public.expense_types(owner_id);

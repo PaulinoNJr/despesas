@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
-import { Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Database, Download, FolderCog, Home, KeyRound, LayoutList, LockKeyhole, LogOut, Menu, MoreHorizontal, Plus, Settings, ShieldCheck, Tags, Trash2, TrendingDown, TrendingUp, Users, WalletCards, X } from 'lucide-react'
+import { Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Database, Download, Fingerprint, FolderCog, Home, KeyRound, LayoutList, LockKeyhole, LogOut, Menu, MoreHorizontal, Plus, Settings, ShieldCheck, Tags, Trash2, TrendingDown, TrendingUp, Users, WalletCards, X } from 'lucide-react'
 import './styles.css'
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -34,10 +34,11 @@ const seed = {
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY
-const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey, { auth: { experimental: { passkey: true } } }) : null
 
 function useFinance() {
   const [data, setData] = useState(() => {
+    if (supabase) return { people: [], incomes: [], categories: [], types: [], bills: [], payments: {} }
     try {
       const saved = JSON.parse(localStorage.getItem('conta-clara-data'))
       return saved ? { ...saved, payments: saved.payments || {}, incomes: saved.incomes || [], categories: saved.categories || seed.categories, types: saved.types || seed.types } : { ...seed, payments: {} }
@@ -93,9 +94,35 @@ function useFinance() {
     return error?.message || ''
   }
   const signOut = async () => { if (supabase) await supabase.auth.signOut() }
+  const signInWithPasskey = async () => {
+    if (!supabase?.auth.signInWithPasskey) return 'Passkeys não estão disponíveis. Atualize o app e ative o recurso no Supabase.'
+    const { error } = await supabase.auth.signInWithPasskey()
+    return error?.message || ''
+  }
+  const registerPasskey = async () => {
+    if (!supabase?.auth.registerPasskey) return { error: 'Passkeys não estão disponíveis. Atualize o app e ative o recurso no Supabase.' }
+    const { data, error } = await supabase.auth.registerPasskey()
+    return { data, error: error?.message || '' }
+  }
+  const listPasskeys = async () => {
+    if (!supabase?.auth.passkey?.list) return { data: [], error: 'Passkeys não estão disponíveis.' }
+    const { data, error } = await supabase.auth.passkey.list()
+    return { data: data || [], error: error?.message || '' }
+  }
+  const removePasskey = async passkeyId => {
+    if (!supabase?.auth.passkey?.delete) return 'Passkeys não estão disponíveis.'
+    const { error } = await supabase.auth.passkey.delete({ passkeyId })
+    return error?.message || ''
+  }
   const changePassword = async (currentPassword, password) => {
     if (!supabase) return 'A conexão com o Supabase não está configurada.'
     const { error } = await supabase.auth.updateUser({ password, current_password: currentPassword })
+    return error?.message || ''
+  }
+  const updateDisplayName = async displayName => {
+    if (!supabase) return 'A conexão com o Supabase não está configurada.'
+    const { data, error } = await supabase.auth.updateUser({ data: { display_name: displayName } })
+    if (!error && data.user) setUser(data.user)
     return error?.message || ''
   }
   const updatePreferences = updates => {
@@ -106,7 +133,7 @@ function useFinance() {
 
   const save = async (next, operation) => {
     setData(next)
-    localStorage.setItem('conta-clara-data', JSON.stringify(next))
+    if (!supabase) localStorage.setItem('conta-clara-data', JSON.stringify(next))
     if (!supabase || !operation) return
     const { table, action, payload, id } = operation
     if (action === 'insert') await supabase.from(table).insert(payload)
@@ -116,7 +143,7 @@ function useFinance() {
   const addPerson = async person => {
     const next = { ...data, people: [...data.people, person], incomes: [...data.incomes, ...person.incomes] }
     setData(next)
-    localStorage.setItem('conta-clara-data', JSON.stringify(next))
+    if (!supabase) localStorage.setItem('conta-clara-data', JSON.stringify(next))
     if (!supabase) return
     const total = person.incomes.reduce((sum, income) => sum + income.value, 0)
     await supabase.from('people').insert({ id: person.id, name: person.name, salary: total, pay_day: person.incomes[0].payDay, color: person.color })
@@ -125,7 +152,7 @@ function useFinance() {
   const addIncome = async income => {
     const next = { ...data, incomes: [...data.incomes, income] }
     setData(next)
-    localStorage.setItem('conta-clara-data', JSON.stringify(next))
+    if (!supabase) localStorage.setItem('conta-clara-data', JSON.stringify(next))
     if (supabase) await supabase.from('income_payments').insert({ id: income.id, person_id: income.personId, value: income.value, pay_day: income.payDay })
   }
   const addCategory = category => save({ ...data, categories: [...data.categories, category] }, { table: 'expense_categories', action: 'insert', payload: category })
@@ -139,7 +166,7 @@ function useFinance() {
     if (wasPaid) delete payments[key]; else payments[key] = 'paid'
     const next = { ...data, payments }
     setData(next)
-    localStorage.setItem('conta-clara-data', JSON.stringify(next))
+    if (!supabase) localStorage.setItem('conta-clara-data', JSON.stringify(next))
     if (!supabase) return
     if (wasPaid) await supabase.from('bill_payments').delete().eq('bill_id', bill.id).eq('period', period)
     else await supabase.from('bill_payments').upsert({ bill_id: bill.id, period, status: 'paid' }, { onConflict: 'bill_id,period' })
@@ -149,14 +176,14 @@ function useFinance() {
     const table = { people: 'people', incomes: 'income_payments', categories: 'expense_categories', types: 'expense_types', bills: 'bills' }[kind]
     return save(next, { table, action: 'delete', id })
   }
-  return { ...data, remote, user, authReady, connectionError, preferences, signIn, signOut, changePassword, updatePreferences, addPerson, addIncome, addCategory, addType, addBill, toggleBill, getStatus, remove }
+  return { ...data, remote, user, authReady, connectionError, preferences, signIn, signInWithPasskey, signOut, registerPasskey, listPasskeys, removePasskey, changePassword, updateDisplayName, updatePreferences, addPerson, addIncome, addCategory, addType, addBill, toggleBill, getStatus, remove }
 }
 
 function LoadingPage() {
   return <div className="auth-page"><div className="auth-card loading-card"><span className="brand-mark"><CircleDollarSign size={26}/></span><h1>Conta Clara</h1><p>Verificando sua sessão…</p><div className="loader"/></div></div>
 }
 
-function LoginPage({ onLogin, missingConfig, connectionError }) {
+function LoginPage({ onLogin, onPasskeyLogin, missingConfig, connectionError }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -169,7 +196,15 @@ function LoginPage({ onLogin, missingConfig, connectionError }) {
     setLoading(false)
     if (message) setError(message === 'Invalid login credentials' ? 'E-mail ou senha inválidos.' : message)
   }
-  return <div className="auth-page"><div className="auth-orb orb-one"/><div className="auth-orb orb-two"/><section className="auth-card"><div className="auth-brand"><span className="brand-mark"><CircleDollarSign size={26}/></span><span>conta<span>clara</span></span></div>{missingConfig ? <><h1>Configuração necessária</h1><p>Adicione as variáveis do Supabase na Vercel para liberar o acesso.</p></> : <><div className="lock-circle"><LockKeyhole size={21}/></div><p className="eyebrow">ÁREA RESTRITA</p><h1>Bem-vindo de volta</h1><p>Entre para acompanhar as contas da sua casa.</p><form onSubmit={submit}><label>E-mail<input autoFocus type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} placeholder="voce@email.com"/></label><label>Senha<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Sua senha"/></label>{(error || connectionError) && <div className="login-error">{error || connectionError}</div>}<button className="primary login-submit" disabled={loading}>{loading ? 'Entrando…' : 'Entrar na conta'}</button></form><small className="auth-hint">Seu acesso é criado pelo administrador da aplicação.</small></>}</section></div>
+  const passkeyLogin = async () => {
+    if (!onPasskeyLogin) return
+    setError('')
+    setLoading(true)
+    const message = await onPasskeyLogin()
+    setLoading(false)
+    if (message) setError(message)
+  }
+  return <div className="auth-page"><div className="auth-orb orb-one"/><div className="auth-orb orb-two"/><section className="auth-card"><div className="auth-brand"><span className="brand-mark"><CircleDollarSign size={26}/></span><span>conta<span>clara</span></span></div>{missingConfig ? <><h1>Configuração necessária</h1><p>Adicione as variáveis do Supabase na Vercel para liberar o acesso.</p></> : <><div className="lock-circle"><LockKeyhole size={21}/></div><p className="eyebrow">ÁREA RESTRITA</p><h1>Bem-vindo de volta</h1><p>Entre para acompanhar as contas da sua casa.</p><form onSubmit={submit}><label>E-mail<input autoFocus type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} placeholder="voce@email.com"/></label><label>Senha<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Sua senha"/></label>{(error || connectionError) && <div className="login-error">{error || connectionError}</div>}<button className="primary login-submit" disabled={loading}>{loading ? 'Entrando…' : 'Entrar na conta'}</button>{onPasskeyLogin && <button type="button" className="secondary passkey-login" onClick={passkeyLogin} disabled={loading}><Fingerprint size={16}/>Entrar com Face ID ou digital</button>}</form><small className="auth-hint">Seu acesso é criado pelo administrador da aplicação.</small></>}</section></div>
 }
 
 function App() {
@@ -180,23 +215,24 @@ function App() {
   const [monthOffset, setMonthOffset] = useState(0)
   const [modal, setModal] = useState(null)
   const current = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
+  const displayName = finance.user?.user_metadata?.display_name || finance.user?.email?.split('@')[0] || 'você'
   const navigate = target => { setPage(target); setMenuOpen(false) }
   const nav = [{ id: 'home', label: 'Visão geral', icon: Home }, { id: 'people', label: 'Cadastros', icon: Users }, { id: 'bills', label: 'Lançamentos', icon: LayoutList }, { id: 'categories', label: 'Categorias e tipos', icon: Tags }]
 
   if (!supabase) return <LoginPage missingConfig />
   if (!finance.authReady) return <LoadingPage />
-  if (!finance.user) return <LoginPage onLogin={finance.signIn} connectionError={finance.connectionError}/>
+  if (!finance.user) return <LoginPage onLogin={finance.signIn} onPasskeyLogin={finance.signInWithPasskey} connectionError={finance.connectionError}/>
 
   return <div className="app-shell">
     <aside className={menuOpen ? 'sidebar open' : 'sidebar'}>
       <div className="brand"><span className="brand-mark"><CircleDollarSign size={23}/></span><span>conta<span>clara</span></span><button className="mobile-close" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
       <nav>{nav.map(item => <button key={item.id} onClick={() => navigate(item.id)} className={page === item.id ? 'active' : ''}><item.icon size={19}/>{item.label}</button>)}</nav>
-      <div className="sidebar-bottom"><button onClick={() => navigate('settings')} className={page === 'settings' ? 'active' : ''}><Settings size={19}/>Configurações</button><div className="profile"><div className="avatar">{finance.user.email?.slice(0,2).toUpperCase() || 'CC'}</div><div><strong>Minha conta</strong><small>{finance.user.email}</small></div><div className="profile-menu-wrap"><button className="profile-more" title="Opções da conta" onClick={() => setProfileMenuOpen(!profileMenuOpen)}><MoreHorizontal size={18}/></button>{profileMenuOpen && <div className="profile-popover"><button onClick={() => { setProfileMenuOpen(false); finance.signOut() }}><LogOut size={16}/>Sair da conta</button></div>}</div></div></div>
+      <div className="sidebar-bottom"><button onClick={() => navigate('settings')} className={page === 'settings' ? 'active' : ''}><Settings size={19}/>Configurações</button><div className="profile"><div className="avatar">{displayName.slice(0,2).toUpperCase()}</div><div><strong>{displayName}</strong><small>{finance.user.email}</small></div><div className="profile-menu-wrap"><button className="profile-more" title="Opções da conta" onClick={() => setProfileMenuOpen(!profileMenuOpen)}><MoreHorizontal size={18}/></button>{profileMenuOpen && <div className="profile-popover"><button onClick={() => { setProfileMenuOpen(false); finance.signOut() }}><LogOut size={16}/>Sair da conta</button></div>}</div></div></div>
     </aside>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
     <main>
       <header><button className="menu-btn" onClick={() => setMenuOpen(true)}><Menu/></button><div className="mobile-title">conta<span>clara</span></div><div className="header-actions"><div className="sync-dot" title={finance.remote ? 'Sincronizado com Supabase' : finance.connectionError || 'Sincronizando'}>{finance.remote ? 'Supabase' : 'Conectando'}</div><button className="icon-button"><Bell size={19}/><i/></button></div></header>
-      {page === 'home' && <Dashboard finance={finance} current={current} offset={monthOffset} setOffset={setMonthOffset} openModal={setModal}/>}
+      {page === 'home' && <Dashboard finance={finance} displayName={displayName} current={current} offset={monthOffset} setOffset={setMonthOffset} openModal={setModal}/>}
       {page === 'people' && <People finance={finance} openModal={setModal}/>}
       {page === 'bills' && <Bills finance={finance} openModal={setModal}/>}
       {page === 'categories' && <CategoriesPage finance={finance} openModal={setModal}/>}
@@ -210,7 +246,7 @@ function App() {
   </div>
 }
 
-function Dashboard({ finance, current, offset, setOffset, openModal }) {
+function Dashboard({ finance, displayName, current, offset, setOffset, openModal }) {
   const period = periodKey(current)
   const bills = finance.bills.map(b => ({ ...b, status: finance.getStatus(b, period) }))
   const income = finance.incomes.reduce((sum, item) => sum + item.value, 0)
@@ -221,7 +257,7 @@ function Dashboard({ finance, current, offset, setOffset, openModal }) {
   const sorted = [...bills].sort((a,b) => a.dueDay - b.dueDay)
   const yearMonth = `${months[current.getMonth()]} ${current.getFullYear()}`
   return <section className="content">
-    <div className="page-title"><div><p className="eyebrow">PLANEJAMENTO FINANCEIRO</p><h1>Olá! Veja como está seu mês.</h1><p className="sub">Acompanhe suas contas e mantenha tudo sob controle.</p></div><button className="primary" onClick={() => openModal('bill')}><Plus size={18}/>Novo lançamento</button></div>
+    <div className="page-title"><div><p className="eyebrow">PLANEJAMENTO FINANCEIRO</p><h1>Olá, {displayName}! Veja como está seu mês.</h1><p className="sub">Acompanhe suas contas e mantenha tudo sob controle.</p></div><button className="primary" onClick={() => openModal('bill')}><Plus size={18}/>Novo lançamento</button></div>
     <div className="month-control"><button onClick={() => setOffset(offset - 1)}><ChevronLeft size={18}/></button><div><CalendarDays size={17}/>{yearMonth}</div><button onClick={() => setOffset(offset + 1)}><ChevronRight size={18}/></button></div>
     <div className="cards">
       <Metric label="Receitas do mês" value={money(income)} icon={<TrendingUp/>} tint="purple" detail={`${finance.incomes.length} recebimento${finance.incomes.length !== 1 ? 's' : ''} programado${finance.incomes.length !== 1 ? 's' : ''}`}/>
@@ -261,7 +297,47 @@ function SettingsPage({ finance }) {
     link.click()
     URL.revokeObjectURL(url)
   }
-  return <section className="content settings-page"><div className="page-title"><div><p className="eyebrow">CONFIGURAÇÕES</p><h1>Seu espaço, suas regras.</h1><p className="sub">Gerencie acesso, preferências e uma cópia dos seus dados.</p></div></div><div className="settings-grid"><article className="panel settings-card account-card"><div className="settings-icon purple"><ShieldCheck/></div><h2>Conta protegida</h2><p>Você está conectado com segurança usando o Supabase.</p><div className="account-email"><span>{finance.user.email?.slice(0,2).toUpperCase()}</span><div><strong>{finance.user.email}</strong><small><CheckCircle2 size={13}/>E-mail autenticado</small></div></div></article><PasswordCard changePassword={finance.changePassword}/><article className="panel settings-card"><div className="settings-icon coral"><CalendarDays/></div><h2>Visão de futuro</h2><p>Escolha o alcance da projeção apresentada na página inicial.</p><label className="settings-label">Meses na projeção<select value={finance.preferences.projectionMonths} onChange={event => finance.updatePreferences({ projectionMonths: Number(event.target.value) })}><option value="3">3 meses</option><option value="6">6 meses</option><option value="12">12 meses</option></select></label><small className="settings-note">Essa preferência fica salva neste dispositivo.</small></article><article className="panel settings-card"><div className="settings-icon green"><Database/></div><h2>Seus dados</h2><p>Faça uma cópia portátil das pessoas, receitas, contas e pagamentos.</p><button className="secondary settings-action" onClick={exportBackup}><Download size={16}/>Exportar backup (.json)</button><small className="settings-note">O arquivo não contém sua senha nem credenciais.</small></article><article className="panel settings-card privacy-card"><div className="settings-icon purple"><CreditCard/></div><h2>Privacidade financeira</h2><p>Seus dados são separados por usuário no banco. Nenhuma outra conta consegue visualizar seus lançamentos.</p><div className="privacy-badge"><ShieldCheck size={16}/>Protegido por RLS</div></article></div></section>
+  return <section className="content settings-page"><div className="page-title"><div><p className="eyebrow">CONFIGURAÇÕES</p><h1>Seu espaço, suas regras.</h1><p className="sub">Gerencie acesso, preferências e uma cópia dos seus dados.</p></div></div><div className="settings-grid"><article className="panel settings-card account-card"><div className="settings-icon purple"><ShieldCheck/></div><h2>Conta protegida</h2><p>Você está conectado com segurança usando o Supabase.</p><div className="account-email"><span>{finance.user.email?.slice(0,2).toUpperCase()}</span><div><strong>{finance.user.email}</strong><small><CheckCircle2 size={13}/>E-mail autenticado</small></div></div></article><ProfileNameCard user={finance.user} updateDisplayName={finance.updateDisplayName}/><PasswordCard changePassword={finance.changePassword}/><PasskeyCard finance={finance}/><article className="panel settings-card"><div className="settings-icon coral"><CalendarDays/></div><h2>Visão de futuro</h2><p>Escolha o alcance da projeção apresentada na página inicial.</p><label className="settings-label">Meses na projeção<select value={finance.preferences.projectionMonths} onChange={event => finance.updatePreferences({ projectionMonths: Number(event.target.value) })}><option value="3">3 meses</option><option value="6">6 meses</option><option value="12">12 meses</option></select></label><small className="settings-note">Essa preferência fica salva neste dispositivo.</small></article><article className="panel settings-card"><div className="settings-icon green"><Database/></div><h2>Seus dados</h2><p>Faça uma cópia portátil das pessoas, receitas, contas e pagamentos.</p><button className="secondary settings-action" onClick={exportBackup}><Download size={16}/>Exportar backup (.json)</button><small className="settings-note">O arquivo não contém sua senha nem credenciais.</small></article><article className="panel settings-card privacy-card"><div className="settings-icon purple"><CreditCard/></div><h2>Privacidade financeira</h2><p>Seus dados são separados por usuário no banco. Nenhuma outra conta consegue visualizar seus lançamentos.</p><div className="privacy-badge"><ShieldCheck size={16}/>Protegido por RLS</div></article></div></section>
+}
+
+function ProfileNameCard({ user, updateDisplayName }) {
+  const [name, setName] = useState(user.user_metadata?.display_name || '')
+  const [status, setStatus] = useState('')
+  const [saving, setSaving] = useState(false)
+  const submit = async event => { event.preventDefault(); const trimmed = name.trim(); if (!trimmed) return setStatus('Digite como você gostaria de ser chamado.'); setSaving(true); const error = await updateDisplayName(trimmed); setSaving(false); setStatus(error || 'Nome salvo. Ele já aparece na página inicial.') }
+  return <article className="panel settings-card name-card"><div className="settings-icon green"><Users/></div><h2>Como devemos chamar você?</h2><p>Esse nome aparece na saudação da página inicial e no menu do aplicativo.</p><form onSubmit={submit}><label className="settings-label">Seu nome<input required maxLength="40" value={name} onChange={event => setName(event.target.value)} placeholder="Ex.: Paulino"/></label>{status && <div className={status.startsWith('Nome salvo') ? 'settings-success' : 'login-error'}>{status}</div>}<button className="primary settings-action" disabled={saving}>{saving ? 'Salvando…' : 'Salvar meu nome'}</button></form></article>
+}
+
+function PasskeyCard({ finance }) {
+  const [passkeys, setPasskeys] = useState([])
+  const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(true)
+  const refresh = async () => {
+    setLoading(true)
+    const result = await finance.listPasskeys()
+    setLoading(false)
+    setPasskeys(result.data)
+    if (result.error) setMessage(result.error)
+  }
+  useEffect(() => { refresh() }, [])
+  const enable = async () => {
+    setMessage('')
+    setLoading(true)
+    const result = await finance.registerPasskey()
+    setLoading(false)
+    if (result.error) return setMessage(result.error)
+    setMessage('Chave de acesso adicionada com verificação segura do Supabase.')
+    refresh()
+  }
+  const remove = async id => {
+    setLoading(true)
+    const error = await finance.removePasskey(id)
+    setLoading(false)
+    if (error) return setMessage(error)
+    setMessage('Chave de acesso removida.')
+    refresh()
+  }
+  return <article className="panel settings-card biometric-card"><div className="settings-icon green"><Fingerprint/></div><h2>Face ID ou digital</h2><p>Use uma chave de acesso para entrar com a biometria ou bloqueio de tela deste dispositivo.</p>{message && <div className={message.includes('adicionada') || message.includes('removida') ? 'settings-success' : 'login-error'}>{message}</div>}{passkeys.length > 0 && <div className="passkey-list">{passkeys.map(passkey => <div className="passkey-item" key={passkey.id}><Fingerprint size={16}/><div><strong>{passkey.friendly_name || 'Chave de acesso'}</strong><small>Login protegido por este dispositivo</small></div><button className="text-danger" onClick={() => remove(passkey.id)} disabled={loading}>Remover</button></div>)}</div>}<button className="primary settings-action" onClick={enable} disabled={loading}><Fingerprint size={16}/>{loading ? 'Verificando…' : 'Adicionar Face ID ou digital'}</button><small className="settings-note">Antes, ative Passkeys em Authentication → Passkeys no Supabase. Em produção, HTTPS é obrigatório.</small></article>
 }
 
 function PasswordCard({ changePassword }) {
