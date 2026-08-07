@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
-import { Bell, CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Home, LayoutList, LockKeyhole, LogOut, Menu, MoreHorizontal, Plus, Settings, Trash2, TrendingDown, TrendingUp, Users, WalletCards, X } from 'lucide-react'
+import { Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Database, Download, Home, KeyRound, LayoutList, LockKeyhole, LogOut, Menu, MoreHorizontal, Plus, Settings, ShieldCheck, Trash2, TrendingDown, TrendingUp, Users, WalletCards, X } from 'lucide-react'
 import './styles.css'
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -13,8 +13,13 @@ const periodKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).p
 
 const seed = {
   people: [
-    { id: 'p1', name: 'Você', salary: 4800, payDay: 5, color: '#7067cf' },
-    { id: 'p2', name: 'Parceiro(a)', salary: 3200, payDay: 7, color: '#f39c75' },
+    { id: 'p1', name: 'Você', color: '#7067cf' },
+    { id: 'p2', name: 'Parceiro(a)', color: '#f39c75' },
+  ],
+  incomes: [
+    { id: 'i1', personId: 'p1', value: 2800, payDay: 5 },
+    { id: 'i2', personId: 'p1', value: 2000, payDay: 20 },
+    { id: 'i3', personId: 'p2', value: 3200, payDay: 7 },
   ],
   bills: [
     { id: 'b1', name: 'Aluguel', value: 1450, dueDay: 8, type: 'Fixa', category: 'Moradia', responsible: 'p1', status: 'pending' },
@@ -33,26 +38,29 @@ function useFinance() {
   const [data, setData] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('conta-clara-data'))
-      return saved ? { ...saved, payments: saved.payments || {} } : { ...seed, payments: {} }
+      return saved ? { ...saved, payments: saved.payments || {}, incomes: saved.incomes || [] } : { ...seed, payments: {} }
     } catch { return { ...seed, payments: {} } }
   })
   const [remote, setRemote] = useState(false)
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(!supabase)
   const [connectionError, setConnectionError] = useState('')
+  const [preferences, setPreferences] = useState(() => {
+    try { return { projectionMonths: 6, ...JSON.parse(localStorage.getItem('conta-clara-preferences')) } } catch { return { projectionMonths: 6 } }
+  })
 
   useEffect(() => {
     if (!supabase) return
     let active = true
     const load = async () => {
-      const [people, bills, payments] = await Promise.all([supabase.from('people').select('*').order('created_at'), supabase.from('bills').select('*').order('due_day'), supabase.from('bill_payments').select('*')])
-      if (active && !people.error && !bills.error && !payments.error) {
+      const [people, bills, payments, incomes] = await Promise.all([supabase.from('people').select('*').order('created_at'), supabase.from('bills').select('*').order('due_day'), supabase.from('bill_payments').select('*'), supabase.from('income_payments').select('*').order('pay_day')])
+      if (active && !people.error && !bills.error && !payments.error && !incomes.error) {
         const paymentMap = Object.fromEntries(payments.data.filter(p => p.status === 'paid').map(p => [`${p.bill_id}:${p.period}`, 'paid']))
-        setData({ people: people.data.map(p => ({ id: p.id, name: p.name, salary: Number(p.salary), payDay: p.pay_day, color: p.color })), bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible })), payments: paymentMap })
+        setData({ people: people.data.map(p => ({ id: p.id, name: p.name, color: p.color })), incomes: incomes.data.map(i => ({ id: i.id, personId: i.person_id, value: Number(i.value), payDay: i.pay_day })), bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible })), payments: paymentMap })
         setRemote(true)
         setConnectionError('')
       } else if (active) {
-        setConnectionError(people.error?.message || bills.error?.message || payments.error?.message || 'Não foi possível acessar o banco.')
+        setConnectionError(people.error?.message || bills.error?.message || payments.error?.message || incomes.error?.message || 'Não foi possível acessar o banco.')
       }
     }
     const initialize = async () => {
@@ -67,7 +75,7 @@ function useFinance() {
       if (!active) return
       setUser(session?.user || null)
       if (session) load()
-      else { setRemote(false); setData({ people: [], bills: [], payments: {} }) }
+      else { setRemote(false); setData({ people: [], incomes: [], bills: [], payments: {} }) }
       setAuthReady(true)
     })
     return () => { active = false; subscription.unsubscribe() }
@@ -79,6 +87,16 @@ function useFinance() {
     return error?.message || ''
   }
   const signOut = async () => { if (supabase) await supabase.auth.signOut() }
+  const changePassword = async (currentPassword, password) => {
+    if (!supabase) return 'A conexão com o Supabase não está configurada.'
+    const { error } = await supabase.auth.updateUser({ password, current_password: currentPassword })
+    return error?.message || ''
+  }
+  const updatePreferences = updates => {
+    const next = { ...preferences, ...updates }
+    setPreferences(next)
+    localStorage.setItem('conta-clara-preferences', JSON.stringify(next))
+  }
 
   const save = async (next, operation) => {
     setData(next)
@@ -89,7 +107,21 @@ function useFinance() {
     if (action === 'update') await supabase.from(table).update(payload).eq('id', id)
     if (action === 'delete') await supabase.from(table).delete().eq('id', id)
   }
-  const addPerson = person => save({ ...data, people: [...data.people, person] }, { table: 'people', action: 'insert', payload: { id: person.id, name: person.name, salary: person.salary, pay_day: person.payDay, color: person.color } })
+  const addPerson = async person => {
+    const next = { ...data, people: [...data.people, person], incomes: [...data.incomes, ...person.incomes] }
+    setData(next)
+    localStorage.setItem('conta-clara-data', JSON.stringify(next))
+    if (!supabase) return
+    const total = person.incomes.reduce((sum, income) => sum + income.value, 0)
+    await supabase.from('people').insert({ id: person.id, name: person.name, salary: total, pay_day: person.incomes[0].payDay, color: person.color })
+    await supabase.from('income_payments').insert(person.incomes.map(income => ({ id: income.id, person_id: person.id, value: income.value, pay_day: income.payDay })))
+  }
+  const addIncome = async income => {
+    const next = { ...data, incomes: [...data.incomes, income] }
+    setData(next)
+    localStorage.setItem('conta-clara-data', JSON.stringify(next))
+    if (supabase) await supabase.from('income_payments').insert({ id: income.id, person_id: income.personId, value: income.value, pay_day: income.payDay })
+  }
   const addBill = bill => save({ ...data, bills: [...data.bills, bill] }, { table: 'bills', action: 'insert', payload: { id: bill.id, name: bill.name, value: bill.value, due_day: bill.dueDay, type: bill.type, category: bill.category, responsible: bill.responsible } })
   const getStatus = (bill, period) => data.payments?.[`${bill.id}:${period}`] || 'pending'
   const toggleBill = async (bill, period) => {
@@ -104,8 +136,11 @@ function useFinance() {
     if (wasPaid) await supabase.from('bill_payments').delete().eq('bill_id', bill.id).eq('period', period)
     else await supabase.from('bill_payments').upsert({ bill_id: bill.id, period, status: 'paid' }, { onConflict: 'bill_id,period' })
   }
-  const remove = (kind, id) => save({ ...data, [kind]: data[kind].filter(item => item.id !== id) }, { table: kind === 'people' ? 'people' : 'bills', action: 'delete', id })
-  return { ...data, remote, user, authReady, connectionError, signIn, signOut, addPerson, addBill, toggleBill, getStatus, remove }
+  const remove = (kind, id) => {
+    const next = { ...data, [kind]: data[kind].filter(item => item.id !== id), ...(kind === 'people' ? { incomes: data.incomes.filter(income => income.personId !== id) } : {}) }
+    return save(next, { table: kind === 'people' ? 'people' : kind === 'incomes' ? 'income_payments' : 'bills', action: 'delete', id })
+  }
+  return { ...data, remote, user, authReady, connectionError, preferences, signIn, signOut, changePassword, updatePreferences, addPerson, addIncome, addBill, toggleBill, getStatus, remove }
 }
 
 function LoadingPage() {
@@ -132,6 +167,7 @@ function App() {
   const finance = useFinance()
   const [page, setPage] = useState('home')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const [monthOffset, setMonthOffset] = useState(0)
   const [modal, setModal] = useState(null)
   const current = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
@@ -146,7 +182,7 @@ function App() {
     <aside className={menuOpen ? 'sidebar open' : 'sidebar'}>
       <div className="brand"><span className="brand-mark"><CircleDollarSign size={23}/></span><span>conta<span>clara</span></span><button className="mobile-close" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
       <nav>{nav.map(item => <button key={item.id} onClick={() => navigate(item.id)} className={page === item.id ? 'active' : ''}><item.icon size={19}/>{item.label}</button>)}</nav>
-      <div className="sidebar-bottom"><button><Settings size={19}/>Configurações</button><div className="profile"><div className="avatar">{finance.user.email?.slice(0,2).toUpperCase() || 'CC'}</div><div><strong>Minha conta</strong><small>{finance.user.email}</small></div><button className="sign-out" title="Sair" onClick={finance.signOut}><LogOut size={17}/></button></div></div>
+      <div className="sidebar-bottom"><button onClick={() => navigate('settings')} className={page === 'settings' ? 'active' : ''}><Settings size={19}/>Configurações</button><div className="profile"><div className="avatar">{finance.user.email?.slice(0,2).toUpperCase() || 'CC'}</div><div><strong>Minha conta</strong><small>{finance.user.email}</small></div><div className="profile-menu-wrap"><button className="profile-more" title="Opções da conta" onClick={() => setProfileMenuOpen(!profileMenuOpen)}><MoreHorizontal size={18}/></button>{profileMenuOpen && <div className="profile-popover"><button onClick={() => { setProfileMenuOpen(false); finance.signOut() }}><LogOut size={16}/>Sair da conta</button></div>}</div></div></div>
     </aside>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
     <main>
@@ -154,16 +190,18 @@ function App() {
       {page === 'home' && <Dashboard finance={finance} current={current} offset={monthOffset} setOffset={setMonthOffset} openModal={setModal}/>} 
       {page === 'people' && <People finance={finance} openModal={setModal}/>} 
       {page === 'bills' && <Bills finance={finance} openModal={setModal}/>} 
+      {page === 'settings' && <SettingsPage finance={finance}/>}
     </main>
     {modal === 'person' && <PersonModal onClose={() => setModal(null)} onSave={person => { finance.addPerson(person); setModal(null) }}/>} 
     {modal === 'bill' && <BillModal people={finance.people} onClose={() => setModal(null)} onSave={bill => { finance.addBill(bill); setModal(null) }}/>} 
+    {modal?.type === 'income' && <IncomeModal person={modal.person} onClose={() => setModal(null)} onSave={income => { finance.addIncome(income); setModal(null) }}/>}
   </div>
 }
 
 function Dashboard({ finance, current, offset, setOffset, openModal }) {
   const period = periodKey(current)
   const bills = finance.bills.map(b => ({ ...b, status: finance.getStatus(b, period) }))
-  const income = finance.people.reduce((sum, p) => sum + p.salary, 0)
+  const income = finance.incomes.reduce((sum, item) => sum + item.value, 0)
   const expenses = bills.reduce((sum, b) => sum + b.value, 0)
   const paid = bills.filter(b => b.status === 'paid').reduce((sum, b) => sum + b.value, 0)
   const remaining = expenses - paid
@@ -174,7 +212,7 @@ function Dashboard({ finance, current, offset, setOffset, openModal }) {
     <div className="page-title"><div><p className="eyebrow">PLANEJAMENTO FINANCEIRO</p><h1>Olá! Veja como está seu mês.</h1><p className="sub">Acompanhe suas contas e mantenha tudo sob controle.</p></div><button className="primary" onClick={() => openModal('bill')}><Plus size={18}/>Novo lançamento</button></div>
     <div className="month-control"><button onClick={() => setOffset(offset - 1)}><ChevronLeft size={18}/></button><div><CalendarDays size={17}/>{yearMonth}</div><button onClick={() => setOffset(offset + 1)}><ChevronRight size={18}/></button></div>
     <div className="cards">
-      <Metric label="Receitas do mês" value={money(income)} icon={<TrendingUp/>} tint="purple" detail={`${finance.people.length} fonte${finance.people.length !== 1 ? 's' : ''} de renda`}/>
+      <Metric label="Receitas do mês" value={money(income)} icon={<TrendingUp/>} tint="purple" detail={`${finance.incomes.length} recebimento${finance.incomes.length !== 1 ? 's' : ''} programado${finance.incomes.length !== 1 ? 's' : ''}`}/>
       <Metric label="Contas do mês" value={money(expenses)} icon={<TrendingDown/>} tint="coral" detail={`${bills.length} lançamento${bills.length !== 1 ? 's' : ''} recorrente${bills.length !== 1 ? 's' : ''}`}/>
       <Metric label="Saldo projetado" value={money(balance)} icon={<WalletCards/>} tint={balance < 0 ? 'coral' : 'green'} detail={balance >= 0 ? 'Disponível após as contas' : 'Atenção: saldo negativo'}/>
     </div>
@@ -185,7 +223,7 @@ function Dashboard({ finance, current, offset, setOffset, openModal }) {
       </article>
       <article className="panel progress-panel"><div className="panel-head"><div><h2>Andamento do mês</h2><p>Você já pagou {money(paid)} em contas</p></div><span className="percentage">{expenses ? Math.round((paid/expenses)*100) : 0}%</span></div><div className="progress"><span style={{width: `${expenses ? Math.min((paid/expenses)*100, 100) : 0}%`}}/></div><div className="progress-label"><span>Pago</span><strong>{money(paid)}</strong></div><div className="progress-label"><span>Falta pagar</span><strong>{money(remaining)}</strong></div><hr/><div className="small-stats"><div><span>Contas pagas</span><b>{bills.filter(b=>b.status==='paid').length}</b></div><div><span>Pendentes</span><b>{bills.filter(b=>b.status!=='paid').length}</b></div></div></article>
     </div>
-    <article className="panel projection"><div className="panel-head"><div><h2>Projeção dos próximos meses</h2><p>Estimativa baseada nas receitas e contas recorrentes cadastradas</p></div></div><div className="projection-bars">{[0,1,2,3,4,5].map(i => { const d = new Date(today.getFullYear(), today.getMonth()+i, 1); const future = balance * (i+1); return <div className="bar-col" key={i}><div className="bar-value">{money(future)}</div><div className="bar-track"><span style={{height: `${Math.max(22, Math.min(100, 22 + i*14))}%`}}/></div><small>{months[d.getMonth()].slice(0,3)}</small></div>})}</div></article>
+    <article className="panel projection"><div className="panel-head"><div><h2>Projeção dos próximos meses</h2><p>Estimativa baseada nas receitas e contas recorrentes cadastradas</p></div></div><div className="projection-bars">{Array.from({ length: finance.preferences.projectionMonths }, (_, i) => i).map(i => { const d = new Date(today.getFullYear(), today.getMonth()+i, 1); const future = balance * (i+1); return <div className="bar-col" key={i}><div className="bar-value">{money(future)}</div><div className="bar-track"><span style={{height: `${Math.max(22, Math.min(100, 22 + i*14))}%`}}/></div><small>{months[d.getMonth()].slice(0,3)}</small></div>})}</div></article>
   </section>
 }
 
@@ -193,7 +231,44 @@ function Metric({ label, value, icon, tint, detail }) { return <article classNam
 function BillRow({ bill, person, onToggle }) { return <div className="bill-row"><button aria-label="Marcar pagamento" onClick={onToggle} className={bill.status === 'paid' ? 'check paid' : 'check'}>{bill.status === 'paid' && '✓'}</button><div className="due-date"><b>{String(bill.dueDay).padStart(2,'0')}</b><span>{today.toLocaleDateString('pt-BR', {month:'short'}).replace('.','')}</span></div><div className="bill-info"><strong>{bill.name}</strong><span>{bill.category} {person ? `· ${person.name}` : ''}</span></div><strong className={bill.status === 'paid' ? 'paid-value' : ''}>{money(bill.value)}</strong><span className={bill.status === 'paid' ? 'status paid-status' : 'status'}>{bill.status === 'paid' ? 'Pago' : 'Pendente'}</span></div> }
 function Empty({ text }) { return <div className="empty">{text}</div> }
 
-function People({ finance, openModal }) { return <section className="content"><div className="page-title"><div><p className="eyebrow">CADASTROS</p><h1>Pessoas e receitas</h1><p className="sub">Cadastre quem contribui para o orçamento da casa.</p></div><button className="primary" onClick={() => openModal('person')}><Plus size={18}/>Nova pessoa</button></div><div className="info-strip"><Users size={20}/><span>As receitas cadastradas aparecem automaticamente nas projeções mensais.</span></div><div className="person-grid">{finance.people.map(p => <article className="person-card" key={p.id}><div className="person-card-top"><div className="person-avatar" style={{background:p.color}}>{p.name.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><button className="delete" onClick={() => finance.remove('people', p.id)}><Trash2 size={17}/></button></div><h2>{p.name}</h2><p>Recebe todo dia {p.payDay}</p><div className="salary"><span>Salário mensal</span><strong>{money(p.salary)}</strong></div></article>)}{finance.people.length === 0 && <Empty text="Cadastre a primeira pessoa para começar."/>}</div></section> }
+function People({ finance, openModal }) {
+  return <section className="content"><div className="page-title"><div><p className="eyebrow">CADASTROS</p><h1>Pessoas e receitas</h1><p className="sub">Cadastre quem contribui para o orçamento da casa.</p></div><button className="primary" onClick={() => openModal('person')}><Plus size={18}/>Nova pessoa</button></div><div className="info-strip"><Users size={20}/><span>Inclua quantos recebimentos quiser para cada pessoa.</span></div><div className="person-grid">{finance.people.map(p => { const incomes = finance.incomes.filter(income => income.personId === p.id).sort((a,b) => a.payDay - b.payDay); const total = incomes.reduce((sum, income) => sum + income.value, 0); return <article className="person-card" key={p.id}><div className="person-card-top"><div className="person-avatar" style={{background:p.color}}>{p.name.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><button className="delete" onClick={() => finance.remove('people', p.id)}><Trash2 size={17}/></button></div><h2>{p.name}</h2><div className="income-list">{incomes.map(income => <div key={income.id}><span>Dia {income.payDay}</span><b>{money(income.value)}</b><button className="delete income-delete" title="Remover pagamento" onClick={() => finance.remove('incomes', income.id)}><X size={13}/></button></div>)}</div><button className="add-income" onClick={() => openModal({ type: 'income', person: p })}><Plus size={14}/>Adicionar pagamento</button><div className="salary"><span>Total mensal</span><strong>{money(total)}</strong></div></article>})}{finance.people.length === 0 && <Empty text="Cadastre a primeira pessoa para começar."/>}</div></section>
+}
+
+function SettingsPage({ finance }) {
+  const exportBackup = () => {
+    const backup = { exportedAt: new Date().toISOString(), people: finance.people, incomes: finance.incomes, bills: finance.bills, payments: finance.payments }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `conta-clara-backup-${new Date().toISOString().slice(0, 10)}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+  return <section className="content settings-page"><div className="page-title"><div><p className="eyebrow">CONFIGURAÇÕES</p><h1>Seu espaço, suas regras.</h1><p className="sub">Gerencie acesso, preferências e uma cópia dos seus dados.</p></div></div><div className="settings-grid"><article className="panel settings-card account-card"><div className="settings-icon purple"><ShieldCheck/></div><h2>Conta protegida</h2><p>Você está conectado com segurança usando o Supabase.</p><div className="account-email"><span>{finance.user.email?.slice(0,2).toUpperCase()}</span><div><strong>{finance.user.email}</strong><small><CheckCircle2 size={13}/>E-mail autenticado</small></div></div></article><PasswordCard changePassword={finance.changePassword}/><article className="panel settings-card"><div className="settings-icon coral"><CalendarDays/></div><h2>Visão de futuro</h2><p>Escolha o alcance da projeção apresentada na página inicial.</p><label className="settings-label">Meses na projeção<select value={finance.preferences.projectionMonths} onChange={event => finance.updatePreferences({ projectionMonths: Number(event.target.value) })}><option value="3">3 meses</option><option value="6">6 meses</option><option value="12">12 meses</option></select></label><small className="settings-note">Essa preferência fica salva neste dispositivo.</small></article><article className="panel settings-card"><div className="settings-icon green"><Database/></div><h2>Seus dados</h2><p>Faça uma cópia portátil das pessoas, receitas, contas e pagamentos.</p><button className="secondary settings-action" onClick={exportBackup}><Download size={16}/>Exportar backup (.json)</button><small className="settings-note">O arquivo não contém sua senha nem credenciais.</small></article><article className="panel settings-card privacy-card"><div className="settings-icon purple"><CreditCard/></div><h2>Privacidade financeira</h2><p>Seus dados são separados por usuário no banco. Nenhuma outra conta consegue visualizar seus lançamentos.</p><div className="privacy-badge"><ShieldCheck size={16}/>Protegido por RLS</div></article></div></section>
+}
+
+function PasswordCard({ changePassword }) {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [status, setStatus] = useState('')
+  const [saving, setSaving] = useState(false)
+  const submit = async event => {
+    event.preventDefault()
+    if (password.length < 8) return setStatus('Use pelo menos 8 caracteres na nova senha.')
+    if (password !== confirmation) return setStatus('As senhas não coincidem.')
+    setSaving(true)
+    const error = await changePassword(currentPassword, password)
+    setSaving(false)
+    if (error) return setStatus(error)
+    setCurrentPassword('')
+    setPassword('')
+    setConfirmation('')
+    setStatus('Senha alterada com sucesso.')
+  }
+  return <article className="panel settings-card password-card"><div className="settings-icon purple"><KeyRound/></div><h2>Alterar senha</h2><p>Use uma senha forte e exclusiva para proteger seu acesso.</p><form onSubmit={submit}><label className="settings-label">Senha atual<input required type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} placeholder="Sua senha atual"/></label><label className="settings-label">Nova senha<input required minLength="8" type="password" autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Mínimo de 8 caracteres"/></label><label className="settings-label">Confirmar nova senha<input required type="password" autoComplete="new-password" value={confirmation} onChange={event => setConfirmation(event.target.value)} placeholder="Repita a nova senha"/></label>{status && <div className={status.includes('sucesso') ? 'settings-success' : 'login-error'}>{status}</div>}<button className="primary settings-action" disabled={saving}>{saving ? 'Salvando…' : 'Atualizar senha'}</button></form></article>
+}
 
 function Bills({ finance, openModal }) {
   const [filter, setFilter] = useState('Todos')
@@ -203,8 +278,33 @@ function Bills({ finance, openModal }) {
 }
 
 function Modal({ title, children, onClose }) { return <div className="modal-backdrop"><div className="modal"><div className="modal-head"><h2>{title}</h2><button className="icon-button" onClick={onClose}><X size={20}/></button></div>{children}</div></div> }
-function PersonModal({ onClose, onSave }) { const [form,setForm]=useState({name:'',salary:'',payDay:'5',color:'#7067cf'}); const submit=e=>{e.preventDefault(); if (!form.name || !form.salary) return; onSave({ ...form, id: crypto.randomUUID(), salary:Number(form.salary), payDay:Number(form.payDay) })}; return <Modal title="Nova pessoa" onClose={onClose}><form onSubmit={submit}><label>Nome<input autoFocus required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex.: Maria Silva"/></label><div className="form-row"><label>Salário mensal<input required min="0" step="0.01" type="number" value={form.salary} onChange={e=>setForm({...form,salary:e.target.value})} placeholder="0,00"/></label><label>Dia de recebimento<input required min="1" max="31" type="number" value={form.payDay} onChange={e=>setForm({...form,payDay:e.target.value})}/></label></div><label>Cor de identificação<input className="color-input" type="color" value={form.color} onChange={e=>setForm({...form,color:e.target.value})}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar pessoa</button></div></form></Modal> }
-function BillModal({ people, onClose, onSave }) { const [form,setForm]=useState({name:'',value:'',dueDay:'10',type:'Fixa',category:'Casa',responsible:people[0]?.id || ''}); const submit=e=>{e.preventDefault(); if(!form.name || !form.value) return; onSave({...form,id:crypto.randomUUID(),value:Number(form.value),dueDay:Number(form.dueDay),status:'pending'})}; return <Modal title="Novo lançamento" onClose={onClose}><form onSubmit={submit}><label>Descrição<input autoFocus required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex.: Conta de água"/></label><div className="form-row"><label>Valor<input required min="0" step="0.01" type="number" value={form.value} onChange={e=>setForm({...form,value:e.target.value})} placeholder="0,00"/></label><label>Vencimento<input required min="1" max="31" type="number" value={form.dueDay} onChange={e=>setForm({...form,dueDay:e.target.value})}/></label></div><div className="form-row"><label>Tipo<select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}><option>Fixa</option><option>Flutuante</option></select></label><label>Categoria<input value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/></label></div><label>Responsável<select value={form.responsible} onChange={e=>setForm({...form,responsible:e.target.value})}><option value="">Não definido</option>{people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar lançamento</button></div></form></Modal> }
+function CurrencyInput({ value, onValueChange, ...props }) {
+  const displayValue = value === '' || value === null || value === undefined ? '' : money(value)
+  const handleChange = event => {
+    const digits = event.target.value.replace(/\D/g, '')
+    onValueChange(digits ? Number(digits) / 100 : '')
+  }
+  return <input {...props} type="text" inputMode="numeric" value={displayValue} onChange={handleChange} />
+}
+function PersonModal({ onClose, onSave }) {
+  const [form, setForm] = useState({ name: '', color: '#7067cf', incomes: [{ value: '', payDay: '5' }] })
+  const updateIncome = (index, key, value) => setForm({ ...form, incomes: form.incomes.map((income, i) => i === index ? { ...income, [key]: value } : income) })
+  const submit = event => {
+    event.preventDefault()
+    const validIncomes = form.incomes.filter(income => Number(income.value) > 0)
+    if (!form.name || validIncomes.length === 0) return
+    const personId = crypto.randomUUID()
+    onSave({ id: personId, name: form.name, color: form.color, incomes: validIncomes.map(income => ({ id: crypto.randomUUID(), personId, value: Number(income.value), payDay: Number(income.payDay) })) })
+  }
+  return <Modal title="Nova pessoa" onClose={onClose}><form onSubmit={submit}><label>Nome<input autoFocus required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Ex.: Maria Silva"/></label><div className="income-form-head"><span>Recebimentos mensais</span><button type="button" className="text-button" onClick={() => setForm({ ...form, incomes: [...form.incomes, { value: '', payDay: '20' }] })}><Plus size={14}/>Adicionar</button></div>{form.incomes.map((income, index) => <div className="form-row income-form-row" key={index}><label>Valor<CurrencyInput required value={income.value} onValueChange={value => updateIncome(index, 'value', value)} placeholder="R$ 0,00"/></label><label>Dia de recebimento<input required min="1" max="31" type="number" value={income.payDay} onChange={event => updateIncome(index, 'payDay', event.target.value)}/></label>{form.incomes.length > 1 && <button className="delete remove-income-form" type="button" onClick={() => setForm({ ...form, incomes: form.incomes.filter((_, i) => i !== index) })}><X size={16}/></button>}</div>)}<label>Cor de identificação<input className="color-input" type="color" value={form.color} onChange={event => setForm({ ...form, color: event.target.value })}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar pessoa</button></div></form></Modal>
+}
+
+function IncomeModal({ person, onClose, onSave }) {
+  const [form, setForm] = useState({ value: '', payDay: '20' })
+  const submit = event => { event.preventDefault(); if (!Number(form.value)) return; onSave({ id: crypto.randomUUID(), personId: person.id, value: Number(form.value), payDay: Number(form.payDay) }) }
+  return <Modal title={`Novo pagamento · ${person.name}`} onClose={onClose}><form onSubmit={submit}><label>Valor do pagamento<CurrencyInput autoFocus required value={form.value} onValueChange={value => setForm({ ...form, value })} placeholder="R$ 0,00"/></label><label>Dia de recebimento<input required min="1" max="31" type="number" value={form.payDay} onChange={event => setForm({ ...form, payDay: event.target.value })}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Adicionar pagamento</button></div></form></Modal>
+}
+function BillModal({ people, onClose, onSave }) { const [form,setForm]=useState({name:'',value:'',dueDay:'10',type:'Fixa',category:'Casa',responsible:people[0]?.id || ''}); const submit=e=>{e.preventDefault(); if(!form.name || !form.value) return; onSave({...form,id:crypto.randomUUID(),value:Number(form.value),dueDay:Number(form.dueDay),status:'pending'})}; return <Modal title="Novo lançamento" onClose={onClose}><form onSubmit={submit}><label>Descrição<input autoFocus required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex.: Conta de água"/></label><div className="form-row"><label>Valor<CurrencyInput required value={form.value} onValueChange={value => setForm({...form,value})} placeholder="R$ 0,00"/></label><label>Vencimento<input required min="1" max="31" type="number" value={form.dueDay} onChange={e=>setForm({...form,dueDay:e.target.value})}/></label></div><div className="form-row"><label>Tipo<select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}><option>Fixa</option><option>Flutuante</option></select></label><label>Categoria<input value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/></label></div><label>Responsável<select value={form.responsible} onChange={e=>setForm({...form,responsible:e.target.value})}><option value="">Não definido</option>{people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar lançamento</button></div></form></Modal> }
 
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
 createRoot(document.getElementById('root')).render(<App />)

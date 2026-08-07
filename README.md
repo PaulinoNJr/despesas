@@ -17,7 +17,7 @@ npm run dev
 
 Sem essas variáveis, a aplicação mantém os dados apenas neste navegador, permitindo testar toda a interface.
 
-Se o banco já foi criado com uma versão mais antiga do projeto, execute também [`supabase/migrate-existing-project.sql`](./supabase/migrate-existing-project.sql). Depois disso, você pode desativar **Anonymous sign-ins** em Authentication, pois o app não o utiliza mais.
+Se o banco já foi criado com uma versão mais antiga do projeto, execute também [`supabase/migrate-existing-project.sql`](./supabase/migrate-existing-project.sql). Essa migração também cria a tabela de múltiplos recebimentos por pessoa. Depois disso, você pode desativar **Anonymous sign-ins** em Authentication, pois o app não o utiliza mais.
 
 ## Vercel
 

@@ -4,6 +4,15 @@
 alter table public.people add column if not exists owner_id uuid references auth.users(id) on delete cascade;
 alter table public.bills add column if not exists owner_id uuid references auth.users(id) on delete cascade;
 
+create table if not exists public.income_payments (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  person_id uuid not null references public.people(id) on delete cascade,
+  value numeric(12,2) not null check (value > 0),
+  pay_day smallint not null check (pay_day between 1 and 31),
+  created_at timestamptz not null default now()
+);
+
 -- A tabela de pagamentos pode não existir em instalações anteriores.
 create table if not exists public.bill_payments (
   bill_id uuid not null references public.bills(id) on delete cascade,
@@ -20,10 +29,12 @@ alter table public.bills alter column owner_id set default auth.uid();
 
 alter table public.people enable row level security;
 alter table public.bills enable row level security;
+alter table public.income_payments enable row level security;
 alter table public.bill_payments enable row level security;
 
 drop policy if exists "people_owner_only" on public.people;
 drop policy if exists "bills_owner_only" on public.bills;
+drop policy if exists "income_payments_owner_only" on public.income_payments;
 drop policy if exists "payments_owner_only" on public.bill_payments;
 
 create policy "people_owner_only" on public.people
@@ -32,6 +43,11 @@ create policy "people_owner_only" on public.people
   with check ((select auth.uid()) = owner_id);
 
 create policy "bills_owner_only" on public.bills
+  for all to authenticated
+  using ((select auth.uid()) = owner_id)
+  with check ((select auth.uid()) = owner_id);
+
+create policy "income_payments_owner_only" on public.income_payments
   for all to authenticated
   using ((select auth.uid()) = owner_id)
   with check ((select auth.uid()) = owner_id);

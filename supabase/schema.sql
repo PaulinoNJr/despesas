@@ -24,6 +24,16 @@ create table if not exists public.bills (
   created_at timestamptz not null default now()
 );
 
+-- Cada pessoa pode receber em mais de uma data no mês.
+create table if not exists public.income_payments (
+  id uuid primary key,
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  person_id uuid not null references public.people(id) on delete cascade,
+  value numeric(12,2) not null check (value > 0),
+  pay_day smallint not null check (pay_day between 1 and 31),
+  created_at timestamptz not null default now()
+);
+
 -- O pagamento é separado do lançamento para que uma conta recorrente fique
 -- pendente novamente a cada novo mês.
 create table if not exists public.bill_payments (
@@ -37,7 +47,13 @@ create table if not exists public.bill_payments (
 -- Segurança: cada usuário autenticado só enxerga os próprios dados.
 alter table public.people enable row level security;
 alter table public.bills enable row level security;
+alter table public.income_payments enable row level security;
 alter table public.bill_payments enable row level security;
+
+drop policy if exists "people_owner_only" on public.people;
+drop policy if exists "bills_owner_only" on public.bills;
+drop policy if exists "income_payments_owner_only" on public.income_payments;
+drop policy if exists "payments_owner_only" on public.bill_payments;
 
 create policy "people_owner_only" on public.people
   for all to authenticated
@@ -45,6 +61,11 @@ create policy "people_owner_only" on public.people
   with check ((select auth.uid()) = owner_id);
 
 create policy "bills_owner_only" on public.bills
+  for all to authenticated
+  using ((select auth.uid()) = owner_id)
+  with check ((select auth.uid()) = owner_id);
+
+create policy "income_payments_owner_only" on public.income_payments
   for all to authenticated
   using ((select auth.uid()) = owner_id)
   with check ((select auth.uid()) = owner_id);
