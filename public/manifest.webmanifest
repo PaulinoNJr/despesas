@@ -1,0 +1,12 @@
+{
+  "name": "Conta Clara",
+  "short_name": "Conta Clara",
+  "description": "Controle das contas mensais da casa",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f8fc",
+  "theme_color": "#101937",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
