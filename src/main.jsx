@@ -26,7 +26,7 @@ const seed = {
 }
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
 
 function useFinance() {
@@ -40,13 +40,24 @@ function useFinance() {
 
   useEffect(() => {
     if (!supabase) return
-    Promise.all([supabase.from('people').select('*').order('created_at'), supabase.from('bills').select('*').order('due_day'), supabase.from('bill_payments').select('*')]).then(([people, bills, payments]) => {
-      if (!people.error && !bills.error && !payments.error) {
+    let active = true
+    const load = async () => {
+      let { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        const { data, error } = await supabase.auth.signInAnonymously()
+        if (error || !data.session) return
+        session = data.session
+      }
+      const [people, bills, payments] = await Promise.all([supabase.from('people').select('*').order('created_at'), supabase.from('bills').select('*').order('due_day'), supabase.from('bill_payments').select('*')])
+      if (active && !people.error && !bills.error && !payments.error) {
         const paymentMap = Object.fromEntries(payments.data.filter(p => p.status === 'paid').map(p => [`${p.bill_id}:${p.period}`, 'paid']))
         setData({ people: people.data.map(p => ({ id: p.id, name: p.name, salary: Number(p.salary), payDay: p.pay_day, color: p.color })), bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible })), payments: paymentMap })
         setRemote(true)
       }
-    })
+    }
+    load()
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { if (session) load() })
+    return () => { active = false; subscription.unsubscribe() }
   }, [])
 
   const save = async (next, operation) => {

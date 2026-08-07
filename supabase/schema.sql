@@ -4,6 +4,7 @@
 
 create table if not exists public.people (
   id uuid primary key,
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   name text not null,
   salary numeric(12,2) not null check (salary >= 0),
   pay_day smallint not null check (pay_day between 1 and 31),
@@ -13,6 +14,7 @@ create table if not exists public.people (
 
 create table if not exists public.bills (
   id uuid primary key,
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   name text not null,
   value numeric(12,2) not null check (value >= 0),
   due_day smallint not null check (due_day between 1 and 31),
@@ -32,4 +34,22 @@ create table if not exists public.bill_payments (
   primary key (bill_id, period)
 );
 
--- Habilite RLS e crie políticas adequadas quando houver autenticação.
+-- Segurança: cada sessão anônima só enxerga os próprios dados.
+alter table public.people enable row level security;
+alter table public.bills enable row level security;
+alter table public.bill_payments enable row level security;
+
+create policy "people_owner_only" on public.people
+  for all to authenticated
+  using ((select auth.uid()) = owner_id)
+  with check ((select auth.uid()) = owner_id);
+
+create policy "bills_owner_only" on public.bills
+  for all to authenticated
+  using ((select auth.uid()) = owner_id)
+  with check ((select auth.uid()) = owner_id);
+
+create policy "payments_owner_only" on public.bill_payments
+  for all to authenticated
+  using (exists (select 1 from public.bills where bills.id = bill_payments.bill_id and bills.owner_id = (select auth.uid())))
+  with check (exists (select 1 from public.bills where bills.id = bill_payments.bill_id and bills.owner_id = (select auth.uid())));
