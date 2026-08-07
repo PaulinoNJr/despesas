@@ -17,6 +17,8 @@ npm run dev
 
 Sem essas variáveis, a aplicação mantém os dados apenas neste navegador, permitindo testar toda a interface.
 
+Se o banco já foi criado com uma versão mais antiga do projeto, execute também [`supabase/migrate-existing-project.sql`](./supabase/migrate-existing-project.sql).
+
 ## Vercel
 
 Importe o repositório na Vercel, cadastre `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` nas variáveis de ambiente e faça o deploy. O comando de build é `npm run build` e a pasta de saída é `dist`.
