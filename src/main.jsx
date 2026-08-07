@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
-import { Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Database, Download, Home, KeyRound, LayoutList, LockKeyhole, LogOut, Menu, MoreHorizontal, Plus, Settings, ShieldCheck, Trash2, TrendingDown, TrendingUp, Users, WalletCards, X } from 'lucide-react'
+import { Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Database, Download, FolderCog, Home, KeyRound, LayoutList, LockKeyhole, LogOut, Menu, MoreHorizontal, Plus, Settings, ShieldCheck, Tags, Trash2, TrendingDown, TrendingUp, Users, WalletCards, X } from 'lucide-react'
 import './styles.css'
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -21,6 +21,8 @@ const seed = {
     { id: 'i2', personId: 'p1', value: 2000, payDay: 20 },
     { id: 'i3', personId: 'p2', value: 3200, payDay: 7 },
   ],
+  categories: [{ id: 'c1', name: 'Moradia', color: '#7067cf' }, { id: 'c2', name: 'Casa', color: '#4caf88' }, { id: 'c3', name: 'Financeiro', color: '#e9785f' }, { id: 'c4', name: 'Pessoal', color: '#e0aa45' }],
+  types: [{ id: 't1', name: 'Fixa' }, { id: 't2', name: 'Flutuante' }],
   bills: [
     { id: 'b1', name: 'Aluguel', value: 1450, dueDay: 8, type: 'Fixa', category: 'Moradia', responsible: 'p1', status: 'pending' },
     { id: 'b2', name: 'Energia elétrica', value: 180, dueDay: 10, type: 'Flutuante', category: 'Casa', responsible: 'p1', status: 'pending' },
@@ -38,7 +40,7 @@ function useFinance() {
   const [data, setData] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('conta-clara-data'))
-      return saved ? { ...saved, payments: saved.payments || {}, incomes: saved.incomes || [] } : { ...seed, payments: {} }
+      return saved ? { ...saved, payments: saved.payments || {}, incomes: saved.incomes || [], categories: saved.categories || seed.categories, types: saved.types || seed.types } : { ...seed, payments: {} }
     } catch { return { ...seed, payments: {} } }
   })
   const [remote, setRemote] = useState(false)
@@ -53,14 +55,18 @@ function useFinance() {
     if (!supabase) return
     let active = true
     const load = async () => {
-      const [people, bills, payments, incomes] = await Promise.all([supabase.from('people').select('*').order('created_at'), supabase.from('bills').select('*').order('due_day'), supabase.from('bill_payments').select('*'), supabase.from('income_payments').select('*').order('pay_day')])
-      if (active && !people.error && !bills.error && !payments.error && !incomes.error) {
+      const [people, bills, payments, incomes, categoryResult, typeResult] = await Promise.all([supabase.from('people').select('*').order('created_at'), supabase.from('bills').select('*').order('due_day'), supabase.from('bill_payments').select('*'), supabase.from('income_payments').select('*').order('pay_day'), supabase.from('expense_categories').select('*').order('name'), supabase.from('expense_types').select('*').order('name')])
+      if (active && !people.error && !bills.error && !payments.error && !incomes.error && !categoryResult.error && !typeResult.error) {
+        let categories = categoryResult.data.map(category => ({ id: category.id, name: category.name, color: category.color }))
+        let types = typeResult.data.map(type => ({ id: type.id, name: type.name }))
+        if (categories.length === 0) { categories = seed.categories.map(category => ({ ...category, id: crypto.randomUUID() })); await supabase.from('expense_categories').insert(categories) }
+        if (types.length === 0) { types = seed.types.map(type => ({ ...type, id: crypto.randomUUID() })); await supabase.from('expense_types').insert(types) }
         const paymentMap = Object.fromEntries(payments.data.filter(p => p.status === 'paid').map(p => [`${p.bill_id}:${p.period}`, 'paid']))
-        setData({ people: people.data.map(p => ({ id: p.id, name: p.name, color: p.color })), incomes: incomes.data.map(i => ({ id: i.id, personId: i.person_id, value: Number(i.value), payDay: i.pay_day })), bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible })), payments: paymentMap })
+        setData({ people: people.data.map(p => ({ id: p.id, name: p.name, color: p.color })), incomes: incomes.data.map(i => ({ id: i.id, personId: i.person_id, value: Number(i.value), payDay: i.pay_day })), categories, types, bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible })), payments: paymentMap })
         setRemote(true)
         setConnectionError('')
       } else if (active) {
-        setConnectionError(people.error?.message || bills.error?.message || payments.error?.message || incomes.error?.message || 'Não foi possível acessar o banco.')
+        setConnectionError(people.error?.message || bills.error?.message || payments.error?.message || incomes.error?.message || categoryResult.error?.message || typeResult.error?.message || 'Não foi possível acessar o banco.')
       }
     }
     const initialize = async () => {
@@ -75,7 +81,7 @@ function useFinance() {
       if (!active) return
       setUser(session?.user || null)
       if (session) load()
-      else { setRemote(false); setData({ people: [], incomes: [], bills: [], payments: {} }) }
+      else { setRemote(false); setData({ people: [], incomes: [], categories: [], types: [], bills: [], payments: {} }) }
       setAuthReady(true)
     })
     return () => { active = false; subscription.unsubscribe() }
@@ -122,6 +128,8 @@ function useFinance() {
     localStorage.setItem('conta-clara-data', JSON.stringify(next))
     if (supabase) await supabase.from('income_payments').insert({ id: income.id, person_id: income.personId, value: income.value, pay_day: income.payDay })
   }
+  const addCategory = category => save({ ...data, categories: [...data.categories, category] }, { table: 'expense_categories', action: 'insert', payload: category })
+  const addType = type => save({ ...data, types: [...data.types, type] }, { table: 'expense_types', action: 'insert', payload: type })
   const addBill = bill => save({ ...data, bills: [...data.bills, bill] }, { table: 'bills', action: 'insert', payload: { id: bill.id, name: bill.name, value: bill.value, due_day: bill.dueDay, type: bill.type, category: bill.category, responsible: bill.responsible } })
   const getStatus = (bill, period) => data.payments?.[`${bill.id}:${period}`] || 'pending'
   const toggleBill = async (bill, period) => {
@@ -138,9 +146,10 @@ function useFinance() {
   }
   const remove = (kind, id) => {
     const next = { ...data, [kind]: data[kind].filter(item => item.id !== id), ...(kind === 'people' ? { incomes: data.incomes.filter(income => income.personId !== id) } : {}) }
-    return save(next, { table: kind === 'people' ? 'people' : kind === 'incomes' ? 'income_payments' : 'bills', action: 'delete', id })
+    const table = { people: 'people', incomes: 'income_payments', categories: 'expense_categories', types: 'expense_types', bills: 'bills' }[kind]
+    return save(next, { table, action: 'delete', id })
   }
-  return { ...data, remote, user, authReady, connectionError, preferences, signIn, signOut, changePassword, updatePreferences, addPerson, addIncome, addBill, toggleBill, getStatus, remove }
+  return { ...data, remote, user, authReady, connectionError, preferences, signIn, signOut, changePassword, updatePreferences, addPerson, addIncome, addCategory, addType, addBill, toggleBill, getStatus, remove }
 }
 
 function LoadingPage() {
@@ -172,7 +181,7 @@ function App() {
   const [modal, setModal] = useState(null)
   const current = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
   const navigate = target => { setPage(target); setMenuOpen(false) }
-  const nav = [{ id: 'home', label: 'Visão geral', icon: Home }, { id: 'people', label: 'Cadastros', icon: Users }, { id: 'bills', label: 'Lançamentos', icon: LayoutList }]
+  const nav = [{ id: 'home', label: 'Visão geral', icon: Home }, { id: 'people', label: 'Cadastros', icon: Users }, { id: 'bills', label: 'Lançamentos', icon: LayoutList }, { id: 'categories', label: 'Categorias e tipos', icon: Tags }]
 
   if (!supabase) return <LoginPage missingConfig />
   if (!finance.authReady) return <LoadingPage />
@@ -187,14 +196,17 @@ function App() {
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
     <main>
       <header><button className="menu-btn" onClick={() => setMenuOpen(true)}><Menu/></button><div className="mobile-title">conta<span>clara</span></div><div className="header-actions"><div className="sync-dot" title={finance.remote ? 'Sincronizado com Supabase' : finance.connectionError || 'Sincronizando'}>{finance.remote ? 'Supabase' : 'Conectando'}</div><button className="icon-button"><Bell size={19}/><i/></button></div></header>
-      {page === 'home' && <Dashboard finance={finance} current={current} offset={monthOffset} setOffset={setMonthOffset} openModal={setModal}/>} 
-      {page === 'people' && <People finance={finance} openModal={setModal}/>} 
-      {page === 'bills' && <Bills finance={finance} openModal={setModal}/>} 
+      {page === 'home' && <Dashboard finance={finance} current={current} offset={monthOffset} setOffset={setMonthOffset} openModal={setModal}/>}
+      {page === 'people' && <People finance={finance} openModal={setModal}/>}
+      {page === 'bills' && <Bills finance={finance} openModal={setModal}/>}
+      {page === 'categories' && <CategoriesPage finance={finance} openModal={setModal}/>}
       {page === 'settings' && <SettingsPage finance={finance}/>}
     </main>
-    {modal === 'person' && <PersonModal onClose={() => setModal(null)} onSave={person => { finance.addPerson(person); setModal(null) }}/>} 
-    {modal === 'bill' && <BillModal people={finance.people} onClose={() => setModal(null)} onSave={bill => { finance.addBill(bill); setModal(null) }}/>} 
+    {modal === 'person' && <PersonModal onClose={() => setModal(null)} onSave={person => { finance.addPerson(person); setModal(null) }}/>}
+    {modal === 'bill' && <BillModal people={finance.people} categories={finance.categories} types={finance.types} onClose={() => setModal(null)} onSave={bill => { finance.addBill(bill); setModal(null) }}/>}
     {modal?.type === 'income' && <IncomeModal person={modal.person} onClose={() => setModal(null)} onSave={income => { finance.addIncome(income); setModal(null) }}/>}
+    {modal === 'category' && <CategoryModal onClose={() => setModal(null)} onSave={category => { finance.addCategory(category); setModal(null) }}/>}
+    {modal === 'type' && <TypeModal onClose={() => setModal(null)} onSave={type => { finance.addType(type); setModal(null) }}/>}
   </div>
 }
 
@@ -233,6 +245,10 @@ function Empty({ text }) { return <div className="empty">{text}</div> }
 
 function People({ finance, openModal }) {
   return <section className="content"><div className="page-title"><div><p className="eyebrow">CADASTROS</p><h1>Pessoas e receitas</h1><p className="sub">Cadastre quem contribui para o orçamento da casa.</p></div><button className="primary" onClick={() => openModal('person')}><Plus size={18}/>Nova pessoa</button></div><div className="info-strip"><Users size={20}/><span>Inclua quantos recebimentos quiser para cada pessoa.</span></div><div className="person-grid">{finance.people.map(p => { const incomes = finance.incomes.filter(income => income.personId === p.id).sort((a,b) => a.payDay - b.payDay); const total = incomes.reduce((sum, income) => sum + income.value, 0); return <article className="person-card" key={p.id}><div className="person-card-top"><div className="person-avatar" style={{background:p.color}}>{p.name.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><button className="delete" onClick={() => finance.remove('people', p.id)}><Trash2 size={17}/></button></div><h2>{p.name}</h2><div className="income-list">{incomes.map(income => <div key={income.id}><span>Dia {income.payDay}</span><b>{money(income.value)}</b><button className="delete income-delete" title="Remover pagamento" onClick={() => finance.remove('incomes', income.id)}><X size={13}/></button></div>)}</div><button className="add-income" onClick={() => openModal({ type: 'income', person: p })}><Plus size={14}/>Adicionar pagamento</button><div className="salary"><span>Total mensal</span><strong>{money(total)}</strong></div></article>})}{finance.people.length === 0 && <Empty text="Cadastre a primeira pessoa para começar."/>}</div></section>
+}
+
+function CategoriesPage({ finance, openModal }) {
+  return <section className="content"><div className="page-title"><div><p className="eyebrow">ORGANIZAÇÃO</p><h1>Categorias e tipos</h1><p className="sub">Personalize como suas contas aparecem no planejamento.</p></div></div><div className="categories-grid"><article className="panel category-panel"><div className="panel-head"><div><h2>Categorias</h2><p>Classifique para onde o dinheiro vai.</p></div><button className="primary small-primary" onClick={() => openModal('category')}><Plus size={16}/>Nova categoria</button></div><div className="category-items">{finance.categories.map(category => <div className="category-item" key={category.id}><span className="category-color" style={{ background: category.color }}/><strong>{category.name}</strong><button className="delete" title="Excluir categoria" onClick={() => finance.remove('categories', category.id)}><Trash2 size={16}/></button></div>)}{finance.categories.length === 0 && <Empty text="Nenhuma categoria cadastrada."/>}</div></article><article className="panel category-panel"><div className="panel-head"><div><h2>Tipos de lançamento</h2><p>Defina se a despesa é fixa, variável ou outra.</p></div><button className="primary small-primary" onClick={() => openModal('type')}><Plus size={16}/>Novo tipo</button></div><div className="type-items">{finance.types.map(type => <div className="type-item" key={type.id}><FolderCog size={17}/><strong>{type.name}</strong><button className="delete" title="Excluir tipo" onClick={() => finance.remove('types', type.id)}><Trash2 size={16}/></button></div>)}{finance.types.length === 0 && <Empty text="Nenhum tipo cadastrado."/>}</div></article></div><div className="info-strip categories-tip"><Tags size={20}/><span>As categorias e tipos cadastrados ficam disponíveis automaticamente ao criar um lançamento.</span></div></section>
 }
 
 function SettingsPage({ finance }) {
@@ -274,7 +290,7 @@ function Bills({ finance, openModal }) {
   const [filter, setFilter] = useState('Todos')
   const period = periodKey(today)
   const bills = finance.bills.map(b => ({ ...b, status: finance.getStatus(b, period) })).filter(b => filter === 'Todos' || b.type === filter)
-  return <section className="content"><div className="page-title"><div><p className="eyebrow">LANÇAMENTOS</p><h1>Contas e dívidas</h1><p className="sub">Registre suas despesas fixas e os valores que variam a cada mês.</p></div><button className="primary" onClick={() => openModal('bill')}><Plus size={18}/>Novo lançamento</button></div><div className="filters">{['Todos','Fixa','Flutuante'].map(item => <button key={item} onClick={() => setFilter(item)} className={filter === item ? 'selected' : ''}>{item === 'Todos' ? 'Todos os lançamentos' : `${item}s`}</button>)}</div><article className="panel table-panel"><div className="table-head"><span>DESCRIÇÃO</span><span>TIPO</span><span>VENCIMENTO</span><span>RESPONSÁVEL</span><span>VALOR</span><span>STATUS</span><span/></div>{bills.map(b => { const p=finance.people.find(x=>x.id===b.responsible); return <div className="table-row" key={b.id}><div><b>{b.name}</b><small>{b.category}</small></div><span className={`tag ${b.type === 'Fixa' ? 'fixed' : 'variable'}`}>{b.type}</span><span>Dia {b.dueDay}</span><span>{p?.name || '—'}</span><strong>{money(b.value)}</strong><button className={b.status === 'paid' ? 'status paid-status clickable' : 'status clickable'} onClick={() => finance.toggleBill(b, period)}>{b.status === 'paid' ? 'Pago' : 'Pendente'}</button><button className="delete" onClick={() => finance.remove('bills', b.id)}><Trash2 size={16}/></button></div>})}{bills.length === 0 && <Empty text="Nenhum lançamento neste filtro."/>}</article></section>
+  return <section className="content"><div className="page-title"><div><p className="eyebrow">LANÇAMENTOS</p><h1>Contas e dívidas</h1><p className="sub">Registre suas despesas fixas e os valores que variam a cada mês.</p></div><button className="primary" onClick={() => openModal('bill')}><Plus size={18}/>Novo lançamento</button></div><div className="filters">{['Todos', ...finance.types.map(type => type.name)].map(item => <button key={item} onClick={() => setFilter(item)} className={filter === item ? 'selected' : ''}>{item === 'Todos' ? 'Todos os lançamentos' : item}</button>)}</div><article className="panel table-panel"><div className="table-head"><span>DESCRIÇÃO</span><span>TIPO</span><span>VENCIMENTO</span><span>RESPONSÁVEL</span><span>VALOR</span><span>STATUS</span><span/></div>{bills.map(b => { const p=finance.people.find(x=>x.id===b.responsible); return <div className="table-row" key={b.id}><div><b>{b.name}</b><small>{b.category}</small></div><span className={`tag ${b.type === 'Fixa' ? 'fixed' : 'variable'}`}>{b.type}</span><span>Dia {b.dueDay}</span><span>{p?.name || '—'}</span><strong>{money(b.value)}</strong><button className={b.status === 'paid' ? 'status paid-status clickable' : 'status clickable'} onClick={() => finance.toggleBill(b, period)}>{b.status === 'paid' ? 'Pago' : 'Pendente'}</button><button className="delete" onClick={() => finance.remove('bills', b.id)}><Trash2 size={16}/></button></div>})}{bills.length === 0 && <Empty text="Nenhum lançamento neste filtro."/>}</article></section>
 }
 
 function Modal({ title, children, onClose }) { return <div className="modal-backdrop"><div className="modal"><div className="modal-head"><h2>{title}</h2><button className="icon-button" onClick={onClose}><X size={20}/></button></div>{children}</div></div> }
@@ -304,7 +320,9 @@ function IncomeModal({ person, onClose, onSave }) {
   const submit = event => { event.preventDefault(); if (!Number(form.value)) return; onSave({ id: crypto.randomUUID(), personId: person.id, value: Number(form.value), payDay: Number(form.payDay) }) }
   return <Modal title={`Novo pagamento · ${person.name}`} onClose={onClose}><form onSubmit={submit}><label>Valor do pagamento<CurrencyInput autoFocus required value={form.value} onValueChange={value => setForm({ ...form, value })} placeholder="R$ 0,00"/></label><label>Dia de recebimento<input required min="1" max="31" type="number" value={form.payDay} onChange={event => setForm({ ...form, payDay: event.target.value })}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Adicionar pagamento</button></div></form></Modal>
 }
-function BillModal({ people, onClose, onSave }) { const [form,setForm]=useState({name:'',value:'',dueDay:'10',type:'Fixa',category:'Casa',responsible:people[0]?.id || ''}); const submit=e=>{e.preventDefault(); if(!form.name || !form.value) return; onSave({...form,id:crypto.randomUUID(),value:Number(form.value),dueDay:Number(form.dueDay),status:'pending'})}; return <Modal title="Novo lançamento" onClose={onClose}><form onSubmit={submit}><label>Descrição<input autoFocus required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex.: Conta de água"/></label><div className="form-row"><label>Valor<CurrencyInput required value={form.value} onValueChange={value => setForm({...form,value})} placeholder="R$ 0,00"/></label><label>Vencimento<input required min="1" max="31" type="number" value={form.dueDay} onChange={e=>setForm({...form,dueDay:e.target.value})}/></label></div><div className="form-row"><label>Tipo<select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}><option>Fixa</option><option>Flutuante</option></select></label><label>Categoria<input value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/></label></div><label>Responsável<select value={form.responsible} onChange={e=>setForm({...form,responsible:e.target.value})}><option value="">Não definido</option>{people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar lançamento</button></div></form></Modal> }
+function CategoryModal({ onClose, onSave }) { const [form, setForm] = useState({ name: '', color: '#7067cf' }); const submit = event => { event.preventDefault(); if (!form.name.trim()) return; onSave({ id: crypto.randomUUID(), name: form.name.trim(), color: form.color }) }; return <Modal title="Nova categoria" onClose={onClose}><form onSubmit={submit}><label>Nome da categoria<input autoFocus required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Ex.: Transporte"/></label><label>Cor de identificação<input className="color-input" type="color" value={form.color} onChange={event => setForm({ ...form, color: event.target.value })}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar categoria</button></div></form></Modal> }
+function TypeModal({ onClose, onSave }) { const [name, setName] = useState(''); const submit = event => { event.preventDefault(); if (!name.trim()) return; onSave({ id: crypto.randomUUID(), name: name.trim() }) }; return <Modal title="Novo tipo" onClose={onClose}><form onSubmit={submit}><label>Nome do tipo<input autoFocus required value={name} onChange={event => setName(event.target.value)} placeholder="Ex.: Parcelada"/></label><p className="modal-note">Use tipos para diferenciar despesas fixas, variáveis ou qualquer outra regra que fizer sentido.</p><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar tipo</button></div></form></Modal> }
+function BillModal({ people, categories, types, onClose, onSave }) { const [form,setForm]=useState({name:'',value:'',dueDay:'10',type:types[0]?.name || '',category:categories[0]?.name || '',responsible:people[0]?.id || ''}); const submit=e=>{e.preventDefault(); if(!form.name || !form.value || !form.type || !form.category) return; onSave({...form,id:crypto.randomUUID(),value:Number(form.value),dueDay:Number(form.dueDay),status:'pending'})}; return <Modal title="Novo lançamento" onClose={onClose}><form onSubmit={submit}><label>Descrição<input autoFocus required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex.: Conta de água"/></label><div className="form-row"><label>Valor<CurrencyInput required value={form.value} onValueChange={value => setForm({...form,value})} placeholder="R$ 0,00"/></label><label>Vencimento<input required min="1" max="31" type="number" value={form.dueDay} onChange={e=>setForm({...form,dueDay:e.target.value})}/></label></div><div className="form-row"><label>Tipo<select required value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>{types.map(type => <option key={type.id} value={type.name}>{type.name}</option>)}</select></label><label>Categoria<select required value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{categories.map(category => <option key={category.id} value={category.name}>{category.name}</option>)}</select></label></div><label>Responsável<select value={form.responsible} onChange={e=>setForm({...form,responsible:e.target.value})}><option value="">Não definido</option>{people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar lançamento</button></div></form></Modal> }
 
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
 createRoot(document.getElementById('root')).render(<App />)

@@ -13,6 +13,23 @@ create table if not exists public.income_payments (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.expense_categories (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  name text not null check (char_length(trim(name)) > 0),
+  color text not null default '#7067cf',
+  created_at timestamptz not null default now(),
+  unique (owner_id, name)
+);
+
+create table if not exists public.expense_types (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  name text not null check (char_length(trim(name)) > 0),
+  created_at timestamptz not null default now(),
+  unique (owner_id, name)
+);
+
 -- A tabela de pagamentos pode não existir em instalações anteriores.
 create table if not exists public.bill_payments (
   bill_id uuid not null references public.bills(id) on delete cascade,
@@ -30,11 +47,15 @@ alter table public.bills alter column owner_id set default auth.uid();
 alter table public.people enable row level security;
 alter table public.bills enable row level security;
 alter table public.income_payments enable row level security;
+alter table public.expense_categories enable row level security;
+alter table public.expense_types enable row level security;
 alter table public.bill_payments enable row level security;
 
 drop policy if exists "people_owner_only" on public.people;
 drop policy if exists "bills_owner_only" on public.bills;
 drop policy if exists "income_payments_owner_only" on public.income_payments;
+drop policy if exists "expense_categories_owner_only" on public.expense_categories;
+drop policy if exists "expense_types_owner_only" on public.expense_types;
 drop policy if exists "payments_owner_only" on public.bill_payments;
 
 create policy "people_owner_only" on public.people
@@ -48,6 +69,16 @@ create policy "bills_owner_only" on public.bills
   with check ((select auth.uid()) = owner_id);
 
 create policy "income_payments_owner_only" on public.income_payments
+  for all to authenticated
+  using ((select auth.uid()) = owner_id)
+  with check ((select auth.uid()) = owner_id);
+
+create policy "expense_categories_owner_only" on public.expense_categories
+  for all to authenticated
+  using ((select auth.uid()) = owner_id)
+  with check ((select auth.uid()) = owner_id);
+
+create policy "expense_types_owner_only" on public.expense_types
   for all to authenticated
   using ((select auth.uid()) = owner_id)
   with check ((select auth.uid()) = owner_id);
