@@ -13,8 +13,8 @@ create table if not exists public.bill_payments (
   primary key (bill_id, period)
 );
 
--- Registros antigos não pertencem a uma sessão e, por segurança, não são
--- compartilhados. O app passará a gravar dados novos com owner_id automático.
+-- Registros antigos sem proprietário não serão compartilhados. O app passa a
+-- gravar dados novos com owner_id automático, a partir da sessão autenticada.
 alter table public.people alter column owner_id set default auth.uid();
 alter table public.bills alter column owner_id set default auth.uid();
 

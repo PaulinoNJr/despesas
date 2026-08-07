@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
-import { Bell, CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Home, LayoutList, Menu, MoreHorizontal, Plus, Settings, Trash2, TrendingDown, TrendingUp, Users, WalletCards, X } from 'lucide-react'
+import { Bell, CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Home, LayoutList, LockKeyhole, LogOut, Menu, MoreHorizontal, Plus, Settings, Trash2, TrendingDown, TrendingUp, Users, WalletCards, X } from 'lucide-react'
 import './styles.css'
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -37,28 +37,48 @@ function useFinance() {
     } catch { return { ...seed, payments: {} } }
   })
   const [remote, setRemote] = useState(false)
+  const [user, setUser] = useState(null)
+  const [authReady, setAuthReady] = useState(!supabase)
+  const [connectionError, setConnectionError] = useState('')
 
   useEffect(() => {
     if (!supabase) return
     let active = true
     const load = async () => {
-      let { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        const { data, error } = await supabase.auth.signInAnonymously()
-        if (error || !data.session) return
-        session = data.session
-      }
       const [people, bills, payments] = await Promise.all([supabase.from('people').select('*').order('created_at'), supabase.from('bills').select('*').order('due_day'), supabase.from('bill_payments').select('*')])
       if (active && !people.error && !bills.error && !payments.error) {
         const paymentMap = Object.fromEntries(payments.data.filter(p => p.status === 'paid').map(p => [`${p.bill_id}:${p.period}`, 'paid']))
         setData({ people: people.data.map(p => ({ id: p.id, name: p.name, salary: Number(p.salary), payDay: p.pay_day, color: p.color })), bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible })), payments: paymentMap })
         setRemote(true)
+        setConnectionError('')
+      } else if (active) {
+        setConnectionError(people.error?.message || bills.error?.message || payments.error?.message || 'Não foi possível acessar o banco.')
       }
     }
-    load()
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { if (session) load() })
+    const initialize = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!active) return
+      setUser(session?.user || null)
+      if (session) await load()
+      if (active) setAuthReady(true)
+    }
+    initialize()
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return
+      setUser(session?.user || null)
+      if (session) load()
+      else { setRemote(false); setData({ people: [], bills: [], payments: {} }) }
+      setAuthReady(true)
+    })
     return () => { active = false; subscription.unsubscribe() }
   }, [])
+
+  const signIn = async (email, password) => {
+    if (!supabase) return 'Configure as variáveis do Supabase para entrar.'
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    return error?.message || ''
+  }
+  const signOut = async () => { if (supabase) await supabase.auth.signOut() }
 
   const save = async (next, operation) => {
     setData(next)
@@ -85,7 +105,27 @@ function useFinance() {
     else await supabase.from('bill_payments').upsert({ bill_id: bill.id, period, status: 'paid' }, { onConflict: 'bill_id,period' })
   }
   const remove = (kind, id) => save({ ...data, [kind]: data[kind].filter(item => item.id !== id) }, { table: kind === 'people' ? 'people' : 'bills', action: 'delete', id })
-  return { ...data, remote, addPerson, addBill, toggleBill, getStatus, remove }
+  return { ...data, remote, user, authReady, connectionError, signIn, signOut, addPerson, addBill, toggleBill, getStatus, remove }
+}
+
+function LoadingPage() {
+  return <div className="auth-page"><div className="auth-card loading-card"><span className="brand-mark"><CircleDollarSign size={26}/></span><h1>Conta Clara</h1><p>Verificando sua sessão…</p><div className="loader"/></div></div>
+}
+
+function LoginPage({ onLogin, missingConfig, connectionError }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const submit = async event => {
+    event.preventDefault()
+    setError('')
+    setLoading(true)
+    const message = await onLogin(email, password)
+    setLoading(false)
+    if (message) setError(message === 'Invalid login credentials' ? 'E-mail ou senha inválidos.' : message)
+  }
+  return <div className="auth-page"><div className="auth-orb orb-one"/><div className="auth-orb orb-two"/><section className="auth-card"><div className="auth-brand"><span className="brand-mark"><CircleDollarSign size={26}/></span><span>conta<span>clara</span></span></div>{missingConfig ? <><h1>Configuração necessária</h1><p>Adicione as variáveis do Supabase na Vercel para liberar o acesso.</p></> : <><div className="lock-circle"><LockKeyhole size={21}/></div><p className="eyebrow">ÁREA RESTRITA</p><h1>Bem-vindo de volta</h1><p>Entre para acompanhar as contas da sua casa.</p><form onSubmit={submit}><label>E-mail<input autoFocus type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} placeholder="voce@email.com"/></label><label>Senha<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Sua senha"/></label>{(error || connectionError) && <div className="login-error">{error || connectionError}</div>}<button className="primary login-submit" disabled={loading}>{loading ? 'Entrando…' : 'Entrar na conta'}</button></form><small className="auth-hint">Seu acesso é criado pelo administrador da aplicação.</small></>}</section></div>
 }
 
 function App() {
@@ -98,15 +138,19 @@ function App() {
   const navigate = target => { setPage(target); setMenuOpen(false) }
   const nav = [{ id: 'home', label: 'Visão geral', icon: Home }, { id: 'people', label: 'Cadastros', icon: Users }, { id: 'bills', label: 'Lançamentos', icon: LayoutList }]
 
+  if (!supabase) return <LoginPage missingConfig />
+  if (!finance.authReady) return <LoadingPage />
+  if (!finance.user) return <LoginPage onLogin={finance.signIn} connectionError={finance.connectionError}/>
+
   return <div className="app-shell">
     <aside className={menuOpen ? 'sidebar open' : 'sidebar'}>
       <div className="brand"><span className="brand-mark"><CircleDollarSign size={23}/></span><span>conta<span>clara</span></span><button className="mobile-close" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
       <nav>{nav.map(item => <button key={item.id} onClick={() => navigate(item.id)} className={page === item.id ? 'active' : ''}><item.icon size={19}/>{item.label}</button>)}</nav>
-      <div className="sidebar-bottom"><button><Settings size={19}/>Configurações</button><div className="profile"><div className="avatar">PR</div><div><strong>Minha casa</strong><small>Plano pessoal</small></div><MoreHorizontal size={18}/></div></div>
+      <div className="sidebar-bottom"><button><Settings size={19}/>Configurações</button><div className="profile"><div className="avatar">{finance.user.email?.slice(0,2).toUpperCase() || 'CC'}</div><div><strong>Minha conta</strong><small>{finance.user.email}</small></div><button className="sign-out" title="Sair" onClick={finance.signOut}><LogOut size={17}/></button></div></div>
     </aside>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
     <main>
-      <header><button className="menu-btn" onClick={() => setMenuOpen(true)}><Menu/></button><div className="mobile-title">conta<span>clara</span></div><div className="header-actions"><div className="sync-dot" title={finance.remote ? 'Sincronizado com Supabase' : 'Dados salvos neste dispositivo'}>{finance.remote ? 'Supabase' : 'Local'}</div><button className="icon-button"><Bell size={19}/><i/></button></div></header>
+      <header><button className="menu-btn" onClick={() => setMenuOpen(true)}><Menu/></button><div className="mobile-title">conta<span>clara</span></div><div className="header-actions"><div className="sync-dot" title={finance.remote ? 'Sincronizado com Supabase' : finance.connectionError || 'Sincronizando'}>{finance.remote ? 'Supabase' : 'Conectando'}</div><button className="icon-button"><Bell size={19}/><i/></button></div></header>
       {page === 'home' && <Dashboard finance={finance} current={current} offset={monthOffset} setOffset={setMonthOffset} openModal={setModal}/>} 
       {page === 'people' && <People finance={finance} openModal={setModal}/>} 
       {page === 'bills' && <Bills finance={finance} openModal={setModal}/>} 

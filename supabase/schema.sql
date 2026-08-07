@@ -34,7 +34,7 @@ create table if not exists public.bill_payments (
   primary key (bill_id, period)
 );
 
--- Segurança: cada sessão anônima só enxerga os próprios dados.
+-- Segurança: cada usuário autenticado só enxerga os próprios dados.
 alter table public.people enable row level security;
 alter table public.bills enable row level security;
 alter table public.bill_payments enable row level security;

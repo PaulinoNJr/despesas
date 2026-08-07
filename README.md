@@ -11,13 +11,13 @@ npm run dev
 
 ## Supabase
 
-1. No Supabase, ative **Authentication > Providers > Anonymous sign-ins** e execute [`supabase/schema.sql`](./supabase/schema.sql) no SQL Editor.
+1. Execute [`supabase/schema.sql`](./supabase/schema.sql) no SQL Editor. Se você já usava uma versão anterior, execute também a migração indicada abaixo.
 2. Copie `.env.example` para `.env.local` e preencha URL e a **Publishable key**. A chave legada `VITE_SUPABASE_ANON_KEY` também é aceita.
-3. A aplicação cria uma sessão anônima por navegador e o banco usa RLS para isolar os dados. Não limpe os dados do navegador se quiser preservar o acesso a essa sessão; a próxima evolução recomendada é login por e-mail.
+3. Crie os acessos em **Authentication > Users** no painel do Supabase. A aplicação usa e-mail e senha e o banco usa RLS para isolar os dados de cada usuário.
 
 Sem essas variáveis, a aplicação mantém os dados apenas neste navegador, permitindo testar toda a interface.
 
-Se o banco já foi criado com uma versão mais antiga do projeto, execute também [`supabase/migrate-existing-project.sql`](./supabase/migrate-existing-project.sql).
+Se o banco já foi criado com uma versão mais antiga do projeto, execute também [`supabase/migrate-existing-project.sql`](./supabase/migrate-existing-project.sql). Depois disso, você pode desativar **Anonymous sign-ins** em Authentication, pois o app não o utiliza mais.
 
 ## Vercel
 
