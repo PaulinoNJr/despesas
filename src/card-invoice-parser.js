@@ -67,16 +67,19 @@ const findAfter = (text, expression) => {
   return match?.[1] || ''
 }
 
-export async function parseCreditCardInvoicePdf(file) {
+export async function parseCreditCardInvoicePdf(file, { onProgress } = {}) {
   if (file.type && file.type !== 'application/pdf') throw new Error('Selecione um arquivo PDF de fatura.')
+  onProgress?.({ current: 0, total: 0, label: 'Abrindo o PDF com segurança…' })
   const document = await getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise
   const pages = []
   const textParts = []
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    onProgress?.({ current: pageNumber - 1, total: document.numPages, label: `Lendo página ${pageNumber} de ${document.numPages}…` })
     const content = await (await document.getPage(pageNumber)).getTextContent()
     pages.push(pageRows(content.items))
     textParts.push(content.items.map(item => item.str).join(' '))
   }
+  onProgress?.({ current: document.numPages, total: document.numPages, label: 'Identificando compras, parcelas e total…' })
   const text = normalize(textParts.join(' '))
   const total = parseAmount(findAfter(text, /Total desta fatura\s+(-?\d{1,3}(?:\.\d{3})*,\d{2})/i) || findAfter(text, /O total da sua fatura[^\d]*(\d{1,3}(?:\.\d{3})*,\d{2})/i))
   const dueDate = findAfter(text, /Com vencimento em:?\s*(\d{2}\/\d{2}\/\d{4})/i)
