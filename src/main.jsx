@@ -634,12 +634,12 @@ function CreditCardBills({ finance, openModal }) {
 }
 
 class ImportModalBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { failed: false } }
-  static getDerivedStateFromError() { return { failed: true } }
+  constructor(props) { super(props); this.state = { failed: false, reason: '' } }
+  static getDerivedStateFromError(error) { return { failed: true, reason: error?.message || 'Erro inesperado ao preparar a janela.' } }
   componentDidCatch(error) { console.error('Falha ao abrir o importador de fatura:', error) }
   render() {
     if (!this.state.failed) return this.props.children
-    return <Modal title="Importar fatura do cartão" onClose={this.props.onClose}><div className="invoice-import import-fallback"><div className="settings-icon coral"><CreditCard/></div><h3>Não foi possível abrir o importador</h3><p>Feche esta janela e tente novamente. Nenhum lançamento foi criado.</p><div className="modal-actions"><button className="secondary" onClick={this.props.onClose}>Fechar</button><button className="primary" onClick={() => this.setState({ failed: false })}>Tentar novamente</button></div></div></Modal>
+    return <Modal title="Importar fatura do cartão" onClose={this.props.onClose}><div className="invoice-import import-fallback"><div className="settings-icon coral"><CreditCard/></div><h3>Não foi possível abrir o importador</h3><p>Feche esta janela e tente novamente. Nenhum lançamento foi criado.</p><code className="import-error-detail">{this.state.reason}</code><div className="modal-actions"><button className="secondary" onClick={this.props.onClose}>Fechar</button><button className="primary" onClick={() => this.setState({ failed: false, reason: '' })}>Tentar novamente</button></div></div></Modal>
   }
 }
 
