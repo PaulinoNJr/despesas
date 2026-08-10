@@ -122,6 +122,23 @@ create table if not exists public.family_invites (
   accepted_at timestamptz
 );
 
+create table if not exists public.credit_card_invoices (
+  id uuid primary key,
+  family_id uuid not null references public.families(id) on delete cascade,
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  card_name text not null check (char_length(trim(card_name)) between 1 and 80),
+  invoice_key text not null check (char_length(trim(invoice_key)) between 8 and 160),
+  statement_total numeric(12,2) not null,
+  due_date date not null,
+  source_file_name text,
+  created_at timestamptz not null default now(),
+  unique (family_id, invoice_key)
+);
+
+alter table public.bills add column if not exists card_invoice_id uuid references public.credit_card_invoices(id) on delete set null;
+alter table public.bills drop constraint if exists bills_value_check;
+alter table public.bills add constraint bills_value_check check (value >= 0 or is_credit_card) not valid;
+
 alter table public.family_invites drop constraint if exists family_invites_family_id_email_status_key;
 create unique index if not exists family_invites_one_pending_per_email_idx
   on public.family_invites (family_id, email) where status = 'pending';
@@ -173,6 +190,15 @@ as $$
     join public.family_members owner on owner.family_id = viewer.family_id
     where viewer.user_id = auth.uid() and owner.user_id = target_owner
   );
+$$;
+
+create or replace function public.current_family_id()
+returns uuid
+language sql
+stable
+security definer set search_path = public
+as $$
+  select family_id from public.family_members where user_id = auth.uid();
 $$;
 
 -- Cria (ou renova) um convite. A confirmaÃ§Ã£o e a inclusÃ£o sÃ³ acontecem em
@@ -320,6 +346,7 @@ alter table public.audit_logs enable row level security;
 alter table public.families enable row level security;
 alter table public.family_members enable row level security;
 alter table public.family_invites enable row level security;
+alter table public.credit_card_invoices enable row level security;
 
 alter table public.people force row level security;
 alter table public.bills force row level security;
@@ -331,11 +358,14 @@ alter table public.audit_logs force row level security;
 alter table public.families force row level security;
 alter table public.family_members force row level security;
 alter table public.family_invites force row level security;
+alter table public.credit_card_invoices force row level security;
 
 revoke all on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments, public.audit_logs from anon;
 grant select, insert, update, delete on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments, public.audit_logs to authenticated;
 revoke all on table public.families, public.family_members, public.family_invites from anon;
 grant select on table public.families, public.family_members, public.family_invites to authenticated;
+revoke all on table public.credit_card_invoices from anon;
+grant select, insert, delete on table public.credit_card_invoices to authenticated;
 
 drop policy if exists "people_owner_only" on public.people;
 drop policy if exists "bills_owner_only" on public.bills;
@@ -347,6 +377,7 @@ drop policy if exists "audit_logs_owner_only" on public.audit_logs;
 drop policy if exists "family_visible_to_members" on public.families;
 drop policy if exists "family_members_visible_to_family" on public.family_members;
 drop policy if exists "family_invites_visible_to_family" on public.family_invites;
+drop policy if exists "credit_card_invoices_visible_to_family" on public.credit_card_invoices;
 
 create policy "people_owner_only" on public.people
   for all to authenticated
@@ -413,12 +444,18 @@ create policy "family_invites_visible_to_family" on public.family_invites
     or family_invites.email = lower(coalesce(auth.jwt() ->> 'email', ''))
   );
 
+create policy "credit_card_invoices_visible_to_family" on public.credit_card_invoices
+  for all to authenticated
+  using (family_id = public.current_family_id())
+  with check (family_id = public.current_family_id() and public.can_access_family_owner(owner_id));
+
 revoke all on function public.can_access_family_owner(uuid) from public;
+revoke all on function public.current_family_id() from public;
 revoke all on function public.create_family_invitation(text) from public;
 revoke all on function public.get_family_invitation(uuid) from public;
 revoke all on function public.cancel_family_invitation(uuid) from public;
 revoke all on function public.accept_family_invitation(uuid) from public;
-grant execute on function public.can_access_family_owner(uuid), public.create_family_invitation(text), public.get_family_invitation(uuid), public.cancel_family_invitation(uuid), public.accept_family_invitation(uuid) to authenticated;
+grant execute on function public.can_access_family_owner(uuid), public.current_family_id(), public.create_family_invitation(text), public.get_family_invitation(uuid), public.cancel_family_invitation(uuid), public.accept_family_invitation(uuid) to authenticated;
 
 create index if not exists people_owner_id_idx on public.people(owner_id);
 create index if not exists bills_owner_id_idx on public.bills(owner_id);
@@ -431,3 +468,5 @@ create index if not exists audit_logs_owner_created_at_idx on public.audit_logs(
 create index if not exists family_members_family_id_idx on public.family_members(family_id);
 create index if not exists family_invites_family_id_idx on public.family_invites(family_id);
 create index if not exists family_invites_email_idx on public.family_invites(email);
+create index if not exists bills_card_invoice_id_idx on public.bills(card_invoice_id);
+create index if not exists credit_card_invoices_family_id_idx on public.credit_card_invoices(family_id);

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
 import { Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Database, Download, Fingerprint, FolderCog, History, Home, KeyRound, LayoutList, LockKeyhole, LogOut, Mail, Menu, MoreHorizontal, Pencil, Plus, Settings, ShieldCheck, Tags, Trash2, TrendingDown, TrendingUp, UserPlus, Users, WalletCards, X } from 'lucide-react'
+import { parseCreditCardInvoicePdf } from './card-invoice-parser'
 import './styles.css'
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -96,6 +97,7 @@ function useFinance() {
   const [authReady, setAuthReady] = useState(!supabase)
   const [connectionError, setConnectionError] = useState('')
   const [family, setFamily] = useState({ members: [], invites: [] })
+  const [invoices, setInvoices] = useState([])
   const [preferences, setPreferences] = useState(() => {
     try { return { projectionMonths: 6, ...JSON.parse(localStorage.getItem('conta-clara-preferences')) } } catch { return { projectionMonths: 6 } }
   })
@@ -104,19 +106,20 @@ function useFinance() {
     if (!supabase) return
     let active = true
     const load = async () => {
-      const [people, bills, payments, incomes, categoryResult, typeResult, auditLogs] = await Promise.all([supabase.from('people').select('*').order('created_at'), supabase.from('bills').select('*').order('due_day'), supabase.from('bill_payments').select('*'), supabase.from('income_payments').select('*').order('pay_day'), supabase.from('expense_categories').select('*').order('name'), supabase.from('expense_types').select('*').order('name'), supabase.from('audit_logs').select('*').order('created_at', { ascending: false })])
-      if (active && !people.error && !bills.error && !payments.error && !incomes.error && !categoryResult.error && !typeResult.error && !auditLogs.error) {
+      const [people, bills, payments, incomes, categoryResult, typeResult, auditLogs, invoiceResult] = await Promise.all([supabase.from('people').select('*').order('created_at'), supabase.from('bills').select('*').order('due_day'), supabase.from('bill_payments').select('*'), supabase.from('income_payments').select('*').order('pay_day'), supabase.from('expense_categories').select('*').order('name'), supabase.from('expense_types').select('*').order('name'), supabase.from('audit_logs').select('*').order('created_at', { ascending: false }), supabase.from('credit_card_invoices').select('*').order('created_at', { ascending: false })])
+      if (active && !people.error && !bills.error && !payments.error && !incomes.error && !categoryResult.error && !typeResult.error && !auditLogs.error && !invoiceResult.error) {
         let categories = categoryResult.data.map(category => ({ id: category.id, name: category.name, color: category.color }))
         let types = typeResult.data.map(type => ({ id: type.id, name: type.name }))
         if (categories.length === 0) { categories = seed.categories.map(category => ({ ...category, id: crypto.randomUUID() })); await supabase.from('expense_categories').insert(categories) }
         if (types.length === 0) { types = seed.types.map(type => ({ ...type, id: crypto.randomUUID() })); await supabase.from('expense_types').insert(types) }
         const paymentMap = Object.fromEntries(payments.data.filter(p => p.status === 'paid').map(p => [`${p.bill_id}:${p.period}`, 'paid']))
-        setData({ people: people.data.map(p => ({ id: p.id, name: p.name, color: p.color })), incomes: incomes.data.map(i => ({ id: i.id, personId: i.person_id, value: Number(i.value), payDay: i.pay_day })), categories, types, bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible, installments: b.installments, startPeriod: b.start_period, flow: b.flow || 'payable', isCreditCard: b.is_credit_card || false, cardName: b.card_name || '' })), payments: paymentMap, logs: auditLogs.data.map(log => ({ id: log.id, entityId: log.entity_id, action: log.action, changes: log.changes, createdAt: log.created_at })) })
+        setData({ people: people.data.map(p => ({ id: p.id, name: p.name, color: p.color })), incomes: incomes.data.map(i => ({ id: i.id, personId: i.person_id, value: Number(i.value), payDay: i.pay_day })), categories, types, bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible, installments: b.installments, startPeriod: b.start_period, flow: b.flow || 'payable', isCreditCard: b.is_credit_card || false, cardName: b.card_name || '', cardInvoiceId: b.card_invoice_id || null })), payments: paymentMap, logs: auditLogs.data.map(log => ({ id: log.id, entityId: log.entity_id, action: log.action, changes: log.changes, createdAt: log.created_at })) })
+        setInvoices(invoiceResult.data.map(invoice => ({ id: invoice.id, familyId: invoice.family_id, cardName: invoice.card_name, invoiceKey: invoice.invoice_key, statementTotal: Number(invoice.statement_total), dueDate: invoice.due_date, sourceFileName: invoice.source_file_name })))
         setRemote(true)
         setConnectionError('')
         await loadFamily()
       } else if (active) {
-        setConnectionError(people.error?.message || bills.error?.message || payments.error?.message || incomes.error?.message || categoryResult.error?.message || typeResult.error?.message || auditLogs.error?.message || 'Não foi possível acessar o banco.')
+        setConnectionError(people.error?.message || bills.error?.message || payments.error?.message || incomes.error?.message || categoryResult.error?.message || typeResult.error?.message || auditLogs.error?.message || invoiceResult.error?.message || 'Não foi possível acessar o banco.')
       }
     }
     const initialize = async () => {
@@ -131,7 +134,7 @@ function useFinance() {
       if (!active) return
       setUser(session?.user || null)
       if (session) load()
-      else { setRemote(false); setData({ people: [], incomes: [], categories: [], types: [], bills: [], payments: {}, logs: [] }); setFamily({ members: [], invites: [] }) }
+      else { setRemote(false); setData({ people: [], incomes: [], categories: [], types: [], bills: [], payments: {}, logs: [] }); setFamily({ members: [], invites: [] }); setInvoices([]) }
       setAuthReady(true)
     })
     return () => { active = false; subscription.unsubscribe() }
@@ -182,7 +185,7 @@ function useFinance() {
   const loadFamily = async () => {
     if (!supabase) return
     const [members, invites] = await Promise.all([
-      supabase.from('family_members').select('user_id, email, joined_at').order('joined_at'),
+      supabase.from('family_members').select('family_id, user_id, email, joined_at').order('joined_at'),
       supabase.from('family_invites').select('id, email, token, status, expires_at, created_at').eq('status', 'pending').order('created_at', { ascending: false })
     ])
     if (!members.error && !invites.error) setFamily({ members: members.data || [], invites: invites.data || [] })
@@ -247,7 +250,7 @@ function useFinance() {
   }
   const addCategory = category => save({ ...data, categories: [...data.categories, category] }, { table: 'expense_categories', action: 'insert', payload: category })
   const addType = type => save({ ...data, types: [...data.types, type] }, { table: 'expense_types', action: 'insert', payload: type })
-  const addBill = bill => save({ ...data, bills: [...data.bills, bill] }, { table: 'bills', action: 'insert', payload: { id: bill.id, name: bill.name, value: bill.value, due_day: bill.dueDay, type: bill.type, category: bill.category, responsible: bill.responsible, installments: bill.installments || null, start_period: bill.startPeriod || null, flow: bill.flow || 'payable', is_credit_card: Boolean(bill.isCreditCard), card_name: bill.isCreditCard ? bill.cardName : null } })
+  const addBill = bill => save({ ...data, bills: [...data.bills, bill] }, { table: 'bills', action: 'insert', payload: { id: bill.id, name: bill.name, value: bill.value, due_day: bill.dueDay, type: bill.type, category: bill.category, responsible: bill.responsible, installments: bill.installments || null, start_period: bill.startPeriod || null, flow: bill.flow || 'payable', is_credit_card: Boolean(bill.isCreditCard), card_name: bill.isCreditCard ? bill.cardName : null, card_invoice_id: bill.cardInvoiceId || null } })
   const updateBill = async bill => {
     const existingBill = data.bills.find(item => item.id === bill.id)
     if (!existingBill) return
@@ -257,7 +260,7 @@ function useFinance() {
     const next = { ...data, bills: data.bills.map(item => item.id === bill.id ? updatedBill : item), logs: [log, ...(data.logs || [])] }
     setData(next)
     if (!supabase) { localStorage.setItem('conta-clara-data', JSON.stringify(next)); return }
-    const payload = { name: updatedBill.name, value: updatedBill.value, due_day: updatedBill.dueDay, type: updatedBill.type, category: updatedBill.category, responsible: updatedBill.responsible, installments: updatedBill.installments || null, start_period: updatedBill.startPeriod || null, flow: updatedBill.flow, is_credit_card: updatedBill.isCreditCard, card_name: updatedBill.cardName || null }
+    const payload = { name: updatedBill.name, value: updatedBill.value, due_day: updatedBill.dueDay, type: updatedBill.type, category: updatedBill.category, responsible: updatedBill.responsible, installments: updatedBill.installments || null, start_period: updatedBill.startPeriod || null, flow: updatedBill.flow, is_credit_card: updatedBill.isCreditCard, card_name: updatedBill.cardName || null, card_invoice_id: updatedBill.cardInvoiceId || null }
     await Promise.all([supabase.from('bills').update(payload).eq('id', bill.id), supabase.from('audit_logs').insert({ id: log.id, entity_id: log.entityId, action: log.action, changes: log.changes, created_at: log.createdAt })])
   }
   const getStatus = (bill, period) => data.payments?.[`${bill.id}:${period}`] || 'pending'
@@ -278,7 +281,28 @@ function useFinance() {
     const table = { people: 'people', incomes: 'income_payments', categories: 'expense_categories', types: 'expense_types', bills: 'bills' }[kind]
     return save(next, { table, action: 'delete', id })
   }
-  return { ...data, family, remote, user, authReady, connectionError, preferences, signIn, signInWithPasskey, signOut, registerPasskey, listPasskeys, removePasskey, changePassword, updateDisplayName, updatePreferences, inviteFamilyMember, cancelFamilyInvite, getFamilyInvitation, acceptFamilyInvitation, addPerson, addIncome, addCategory, addType, addBill, updateBill, toggleBill, getStatus, remove }
+  const importCardInvoice = async ({ invoice, bills }) => {
+    if (invoices.some(item => item.invoiceKey === invoice.invoiceKey)) return 'Esta fatura já foi importada nesta família.'
+    const nextBills = bills.map(bill => ({ ...bill, cardInvoiceId: invoice.id }))
+    if (!supabase) {
+      const next = { ...data, bills: [...data.bills, ...nextBills] }
+      setData(next)
+      setInvoices([invoice, ...invoices])
+      localStorage.setItem('conta-clara-data', JSON.stringify(next))
+      return ''
+    }
+    const familyId = family.members.find(member => member.user_id === user?.id)?.family_id
+    if (!familyId) return 'Não foi possível identificar a família para esta fatura.'
+    const { error: invoiceError } = await supabase.from('credit_card_invoices').insert({ id: invoice.id, family_id: familyId, card_name: invoice.cardName, invoice_key: invoice.invoiceKey, statement_total: invoice.statementTotal, due_date: invoice.dueDate, source_file_name: invoice.sourceFileName })
+    if (invoiceError) return invoiceError.message || 'Não foi possível registrar a fatura.'
+    const payload = nextBills.map(bill => ({ id: bill.id, name: bill.name, value: bill.value, due_day: bill.dueDay, type: bill.type, category: bill.category, responsible: bill.responsible || null, installments: bill.installments || null, start_period: bill.startPeriod || null, flow: 'payable', is_credit_card: true, card_name: bill.cardName, card_invoice_id: invoice.id }))
+    const { error: billsError } = await supabase.from('bills').insert(payload)
+    if (billsError) { await supabase.from('credit_card_invoices').delete().eq('id', invoice.id); return billsError.message || 'Não foi possível salvar os lançamentos da fatura.' }
+    setData({ ...data, bills: [...data.bills, ...nextBills] })
+    setInvoices([invoice, ...invoices])
+    return ''
+  }
+  return { ...data, invoices, family, remote, user, authReady, connectionError, preferences, signIn, signInWithPasskey, signOut, registerPasskey, listPasskeys, removePasskey, changePassword, updateDisplayName, updatePreferences, inviteFamilyMember, cancelFamilyInvite, getFamilyInvitation, acceptFamilyInvitation, addPerson, addIncome, addCategory, addType, addBill, updateBill, importCardInvoice, toggleBill, getStatus, remove }
 }
 
 function LoadingPage() {
@@ -388,6 +412,7 @@ function App() {
     )}
     {modal?.type === 'edit-bill' && <BillModal people={finance.people} categories={finance.categories} types={finance.types} initialPeriod={periodKey(current)} initialBill={modal.bill} onClose={() => setModal(null)} onSave={bill => { finance.updateBill(bill); setModal(null) }} />}
     {modal === 'card-bill' && <BillModal people={finance.people} categories={finance.categories} types={finance.types} initialPeriod={periodKey(current)} forceCreditCard onClose={() => setModal(null)} onSave={bill => { finance.addBill(bill); setModal(null) }} />}
+    {modal === 'import-card-invoice' && <CardInvoiceImportModal finance={finance} onClose={() => setModal(null)} />}
     {modal?.type === 'income' && <IncomeModal person={modal.person} onClose={() => setModal(null)} onSave={income => { finance.addIncome(income); setModal(null) }} />}
     {modal === 'category' && <CategoryModal onClose={() => setModal(null)} onSave={category => { finance.addCategory(category); setModal(null) }} />}
     {modal === 'type' && <TypeModal onClose={() => setModal(null)} onSave={type => { finance.addType(type); setModal(null) }} />}
@@ -603,11 +628,45 @@ function CreditCardBills({ finance, openModal }) {
   const cards = Object.values(bills.reduce((groups, bill) => {
     const name = bill.cardName || 'Cartão de crédito'
     if (!groups[name]) groups[name] = { name, bills: [], total: 0 }
-    groups[name].bills.push(bill)
-    groups[name].total += bill.value
+    groups[name].bills.push(bill); groups[name].total += bill.value
     return groups
   }, {}))
-  return <section className="content"><div className="page-title"><div><p className="eyebrow">CARTÃO DE CRÉDITO</p><h1>Compras no cartão</h1><p className="sub">Cada fatura é a soma das compras e parcelas vinculadas ao mesmo cartão.</p></div><button className="primary" onClick={() => openModal('card-bill')}><Plus size={18}/>Nova compra no cartão</button></div><div className="cards credit-summary"><Metric label="Fatura total" value={money(total)} icon={<CreditCard/>} tint="coral" detail={`${bills.length} lançamento${bills.length !== 1 ? 's' : ''} no cartão`}/><Metric label="Cartões ativos" value={String(cards.length)} icon={<CalendarDays/>} tint="purple" detail="Faturas calculadas por cartão"/></div><div className="card-invoice-list">{cards.map(card => <article className="panel card-invoice" key={card.name}><div><span>FATURA · {card.name}</span><strong>{money(card.total)}</strong></div><small>{card.bills.length} compra{card.bills.length !== 1 ? 's' : ''} lançada{card.bills.length !== 1 ? 's' : ''}</small></article>)}</div><article className="panel table-panel credit-table"><div className="table-head"><span>DESCRIÇÃO</span><span>TIPO</span><span>VENCIMENTO</span><span>RESPONSÁVEL</span><span>VALOR</span><span>STATUS</span><span/><span/></div>{bills.map(bill => { const person = finance.people.find(item => item.id === bill.responsible); return <div className="table-row" key={bill.id}><div><b>{bill.name}</b><small>{bill.cardName || 'Cartão de crédito'} · {bill.category}{bill.installments ? ` · ${bill.installments} parcela${bill.installments > 1 ? 's' : ''}` : ''}</small></div><span className={`tag ${bill.type === 'Fixa' ? 'fixed' : 'variable'}`}>{bill.type}</span><span>Dia {bill.dueDay}</span><span>{person?.name || '—'}</span><strong>{money(bill.value)}</strong><button className={bill.status === 'paid' ? 'status paid-status clickable' : 'status clickable'} onClick={() => finance.toggleBill(bill, period)}>{bill.status === 'paid' ? 'Pago' : 'Pendente'}</button><button className="edit" title="Editar lançamento" onClick={() => openModal({ type: 'edit-bill', bill })}><Pencil size={15}/></button><button className="delete" onClick={() => finance.remove('bills', bill.id)}><Trash2 size={16}/></button></div> })}{!bills.length && <Empty text="Nenhuma compra no cartão para este mês."/>}</article></section>
+  return <section className="content"><div className="page-title"><div><p className="eyebrow">CARTÃO DE CRÉDITO</p><h1>Compras no cartão</h1><p className="sub">Cada fatura é a soma das compras e parcelas vinculadas ao mesmo cartão.</p></div><div className="card-actions"><button className="secondary" onClick={() => openModal('import-card-invoice')}><Download size={17}/>Importar fatura</button><button className="primary" onClick={() => openModal('card-bill')}><Plus size={18}/>Nova compra no cartão</button></div></div><div className="cards credit-summary"><Metric label="Fatura total" value={money(total)} icon={<CreditCard/>} tint="coral" detail={`${bills.length} lançamento${bills.length !== 1 ? 's' : ''} no cartão`}/><Metric label="Cartões ativos" value={String(cards.length)} icon={<CalendarDays/>} tint="purple" detail="Faturas calculadas por cartão"/></div><div className="card-invoice-list">{cards.map(card => <article className="panel card-invoice" key={card.name}><div><span>FATURA · {card.name}</span><strong>{money(card.total)}</strong></div><small>{card.bills.length} compra{card.bills.length !== 1 ? 's' : ''} lançada{card.bills.length !== 1 ? 's' : ''}</small></article>)}</div><article className="panel table-panel credit-table"><div className="table-head"><span>DESCRIÇÃO</span><span>TIPO</span><span>VENCIMENTO</span><span>RESPONSÁVEL</span><span>VALOR</span><span>STATUS</span><span/><span/></div>{bills.map(bill => { const person = finance.people.find(item => item.id === bill.responsible); return <div className="table-row" key={bill.id}><div><b>{bill.name}</b><small>{bill.cardName || 'Cartão de crédito'} · {bill.category}{bill.installments ? ` · ${bill.installments} parcela${bill.installments > 1 ? 's' : ''}` : ''}</small></div><span className={`tag ${bill.type === 'Fixa' ? 'fixed' : 'variable'}`}>{bill.type}</span><span>Dia {bill.dueDay}</span><span>{person?.name || '—'}</span><strong>{money(bill.value)}</strong><button className={bill.status === 'paid' ? 'status paid-status clickable' : 'status clickable'} onClick={() => finance.toggleBill(bill, period)}>{bill.status === 'paid' ? 'Pago' : 'Pendente'}</button><button className="edit" title="Editar lançamento" onClick={() => openModal({ type: 'edit-bill', bill })}><Pencil size={15}/></button><button className="delete" onClick={() => finance.remove('bills', bill.id)}><Trash2 size={16}/></button></div> })}{!bills.length && <Empty text="Nenhuma compra no cartão para este mês."/>}</article></section>
+}
+
+function CardInvoiceImportModal({ finance, onClose }) {
+  const [invoice, setInvoice] = useState(null)
+  const [fileName, setFileName] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState('')
+  const [cardName, setCardName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const readFile = async event => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setLoading(true); setMessage('')
+    try {
+      const parsed = await parseCreditCardInvoicePdf(file)
+      setInvoice(parsed); setFileName(file.name); setCardName(parsed.issuer)
+    } catch (error) { setMessage(error.message || 'Não foi possível ler esta fatura.') }
+    setLoading(false)
+  }
+  const updateEntry = (id, updates) => setInvoice(current => ({ ...current, entries: current.entries.map(entry => entry.id === id ? { ...entry, ...updates } : entry) }))
+  const selectedEntries = invoice?.entries.filter(entry => entry.included) || []
+  const selectedTotal = selectedEntries.reduce((sum, entry) => sum + Number(entry.value || 0), 0)
+  const isExact = invoice && Math.abs(selectedTotal - invoice.total) < 0.01
+  const confirm = async () => {
+    if (!invoice || !isExact || !cardName.trim()) return
+    setSaving(true); setMessage('')
+    const dueDate = invoice.dueDate.split('/').reverse().join('-')
+    const savedInvoice = { id: crypto.randomUUID(), cardName: cardName.trim(), invoiceKey: invoice.invoiceKey, statementTotal: invoice.total, dueDate, sourceFileName: fileName }
+    const bills = selectedEntries.filter(entry => Number(entry.value) !== 0).map(entry => ({ id: crypto.randomUUID(), name: entry.description, value: Number(entry.value), dueDay: invoice.dueDay, type: entry.installmentsLeft > 1 ? 'Parcelada' : 'Fatura importada', category: entry.category || 'Outros', responsible: '', installments: Math.max(1, Number(entry.installmentsLeft) || 1), startPeriod: invoice.period, flow: 'payable', isCreditCard: true, cardName: cardName.trim(), status: 'pending' }))
+    const error = await finance.importCardInvoice({ invoice: savedInvoice, bills })
+    setSaving(false)
+    if (error) return setMessage(error)
+    onClose()
+  }
+  return <Modal title="Importar fatura do cartão" onClose={onClose}><div className="invoice-import">{!invoice ? <><div className="settings-icon purple"><CreditCard/></div><h3>Leia sua fatura em PDF</h3><p>Os dados são processados neste navegador. Detectaremos o total, as compras e parcelas antes de gravar qualquer lançamento.</p><label className="invoice-file"><input type="file" accept="application/pdf,.pdf" onChange={readFile}/><Download size={18}/>{loading ? 'Lendo fatura…' : 'Selecionar PDF da fatura'}</label>{message && <div className="login-error">{message}</div>}</> : <><div className="invoice-summary"><div><span>IDENTIFICADOR</span><strong>{invoice.invoiceKey}</strong></div><div><span>VENCIMENTO</span><strong>{invoice.dueDate}</strong></div><div><span>TOTAL DA FATURA</span><strong>{money(invoice.total)}</strong></div></div><label>Cartão<input value={cardName} onChange={event => setCardName(event.target.value)} required/></label><div className="invoice-review-head"><strong>Lançamentos identificados</strong><span className={isExact ? 'exact' : 'not-exact'}>{isExact ? 'Total confere' : `Diferença de ${money(invoice.total - selectedTotal)}`}</span></div><div className="invoice-entry-list">{invoice.entries.map(entry => <div className="invoice-entry" key={entry.id}><input type="checkbox" checked={entry.included} onChange={event => updateEntry(entry.id, { included: event.target.checked })}/><div><input value={entry.description} onChange={event => updateEntry(entry.id, { description: event.target.value })}/><small>{entry.date || 'Ajuste da fatura'}{entry.installmentLabel && ` · parcela ${entry.installmentLabel}`}</small></div><input className="invoice-value" type="number" step="0.01" value={entry.value} onChange={event => updateEntry(entry.id, { value: Number(event.target.value) })}/><label className="invoice-installments">Restam<input type="number" min="1" max="360" value={entry.installmentsLeft} onChange={event => updateEntry(entry.id, { installmentsLeft: event.target.value })}/></label></div>)}</div>{message && <div className="login-error">{message}</div>}<p className="modal-note">Revise os lançamentos. Compras parceladas continuarão na projeção apenas pelo número de parcelas restantes informado na fatura.</p><div className="modal-actions"><button type="button" className="secondary" onClick={() => setInvoice(null)}>Trocar PDF</button><button className="primary" disabled={!isExact || saving || !cardName.trim()} onClick={confirm}>{saving ? 'Importando…' : 'Confirmar e importar'}</button></div></>}</div></Modal>
 }
 
 function Modal({ title, children, onClose }) { return <div className="modal-backdrop"><div className="modal"><div className="modal-head"><h2>{title}</h2><button className="icon-button" onClick={onClose}><X size={20}/></button></div>{children}</div></div> }
@@ -640,7 +699,7 @@ function IncomeModal({ person, onClose, onSave }) {
 function CategoryModal({ onClose, onSave }) { const [form, setForm] = useState({ name: '', color: '#7067cf' }); const submit = event => { event.preventDefault(); if (!form.name.trim()) return; onSave({ id: crypto.randomUUID(), name: form.name.trim(), color: form.color }) }; return <Modal title="Nova categoria" onClose={onClose}><form onSubmit={submit}><label>Nome da categoria<input autoFocus required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Ex.: Transporte"/></label><label>Cor de identificação<input className="color-input" type="color" value={form.color} onChange={event => setForm({ ...form, color: event.target.value })}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar categoria</button></div></form></Modal> }
 function TypeModal({ onClose, onSave }) { const [name, setName] = useState(''); const submit = event => { event.preventDefault(); if (!name.trim()) return; onSave({ id: crypto.randomUUID(), name: name.trim() }) }; return <Modal title="Novo tipo" onClose={onClose}><form onSubmit={submit}><label>Nome do tipo<input autoFocus required value={name} onChange={event => setName(event.target.value)} placeholder="Ex.: Parcelada"/></label><p className="modal-note">Use tipos para diferenciar despesas fixas, variáveis ou qualquer outra regra que fizer sentido.</p><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar tipo</button></div></form></Modal> }
 function BillModal({ people, categories, types, initialPeriod, initialBill, forceCreditCard, onClose, onSave }) {
-  const [form, setForm] = useState(() => initialBill ? { name: initialBill.name, value: initialBill.value, dueDay: String(initialBill.dueDay), type: initialBill.type, category: initialBill.category, responsible: initialBill.responsible || '', installments: initialBill.installments || '', startPeriod: initialBill.startPeriod || initialPeriod, flow: initialBill.flow || 'payable', isCreditCard: Boolean(initialBill.isCreditCard), cardName: initialBill.cardName || '' } : { name: '', value: '', dueDay: '10', type: types[0]?.name || '', category: categories[0]?.name || '', responsible: people[0]?.id || '', installments: '', startPeriod: initialPeriod, flow: 'payable', isCreditCard: Boolean(forceCreditCard), cardName: '' })
+  const [form, setForm] = useState(() => initialBill ? { name: initialBill.name, value: initialBill.value, dueDay: String(initialBill.dueDay), type: initialBill.type, category: initialBill.category, responsible: initialBill.responsible || '', installments: initialBill.installments || '', startPeriod: initialBill.startPeriod || initialPeriod, flow: initialBill.flow || 'payable', isCreditCard: Boolean(initialBill.isCreditCard), cardName: initialBill.cardName || '', cardInvoiceId: initialBill.cardInvoiceId || null } : { name: '', value: '', dueDay: '10', type: types[0]?.name || '', category: categories[0]?.name || '', responsible: people[0]?.id || '', installments: '', startPeriod: initialPeriod, flow: 'payable', isCreditCard: Boolean(forceCreditCard), cardName: '', cardInvoiceId: null })
   const creditCard = forceCreditCard || form.isCreditCard
   const receivable = form.flow === 'receivable'
   const submit = event => {
