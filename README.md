@@ -19,6 +19,24 @@ Sem essas variáveis, a aplicação mantém os dados apenas neste navegador, per
 
 Depois disso, desative **Anonymous sign-ins** e **Enable sign ups** em **Authentication > Providers > Email**, pois os usuários são criados manualmente pelo administrador.
 
+### Família e convites por e-mail
+
+O compartilhamento familiar usa uma confirmação de identidade por e-mail: a pessoa só entra no espaço compartilhado depois de abrir o link recebido e escolher **Aceitar convite**. Os dois membros possuem os mesmos privilégios para visualizar, criar e alterar os dados.
+
+1. Execute novamente o único arquivo [`supabase/setup.sql`](./supabase/setup.sql). Ele cria as famílias, convites e as políticas RLS compartilhadas.
+2. Instale a CLI do Supabase, autentique e publique a função de envio de convite:
+
+```bash
+npx supabase login
+npx supabase link --project-ref SEU_PROJECT_REF
+npx supabase functions deploy invite-family-member
+```
+
+3. Em **Authentication > URL Configuration**, informe a URL de produção como **Site URL** e adicione-a também à lista de **Redirect URLs**, por exemplo `https://despesas-lake.vercel.app/**`.
+4. Em **Authentication > Email Templates**, mantenha `{{ .ConfirmationURL }}` nos modelos **Invite user** e **Magic Link**. Eles são a confirmação de que a pessoa controla o endereço informado.
+
+A função recebe automaticamente as variáveis seguras `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `SUPABASE_SERVICE_ROLE_KEY` do ambiente de Edge Functions. Nunca copie a chave administrativa para a Vercel ou para o front-end.
+
 ### Checklist de segurança
 
 - Use exclusivamente `VITE_SUPABASE_URL` e a **Publishable key** no navegador. Nunca cadastre `service_role`, chave secreta, senha de banco ou token administrativo na Vercel ou no código do front-end.

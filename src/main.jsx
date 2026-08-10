@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
-import { Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Database, Download, Fingerprint, FolderCog, History, Home, KeyRound, LayoutList, LockKeyhole, LogOut, Menu, MoreHorizontal, Pencil, Plus, Settings, ShieldCheck, Tags, Trash2, TrendingDown, TrendingUp, Users, WalletCards, X } from 'lucide-react'
+import { Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign, CreditCard, Database, Download, Fingerprint, FolderCog, History, Home, KeyRound, LayoutList, LockKeyhole, LogOut, Mail, Menu, MoreHorizontal, Pencil, Plus, Settings, ShieldCheck, Tags, Trash2, TrendingDown, TrendingUp, UserPlus, Users, WalletCards, X } from 'lucide-react'
 import './styles.css'
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -95,6 +95,7 @@ function useFinance() {
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(!supabase)
   const [connectionError, setConnectionError] = useState('')
+  const [family, setFamily] = useState({ members: [], invites: [] })
   const [preferences, setPreferences] = useState(() => {
     try { return { projectionMonths: 6, ...JSON.parse(localStorage.getItem('conta-clara-preferences')) } } catch { return { projectionMonths: 6 } }
   })
@@ -113,6 +114,7 @@ function useFinance() {
         setData({ people: people.data.map(p => ({ id: p.id, name: p.name, color: p.color })), incomes: incomes.data.map(i => ({ id: i.id, personId: i.person_id, value: Number(i.value), payDay: i.pay_day })), categories, types, bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible, installments: b.installments, startPeriod: b.start_period, flow: b.flow || 'payable', isCreditCard: b.is_credit_card || false, cardName: b.card_name || '' })), payments: paymentMap, logs: auditLogs.data.map(log => ({ id: log.id, entityId: log.entity_id, action: log.action, changes: log.changes, createdAt: log.created_at })) })
         setRemote(true)
         setConnectionError('')
+        await loadFamily()
       } else if (active) {
         setConnectionError(people.error?.message || bills.error?.message || payments.error?.message || incomes.error?.message || categoryResult.error?.message || typeResult.error?.message || auditLogs.error?.message || 'Não foi possível acessar o banco.')
       }
@@ -129,7 +131,7 @@ function useFinance() {
       if (!active) return
       setUser(session?.user || null)
       if (session) load()
-      else { setRemote(false); setData({ people: [], incomes: [], categories: [], types: [], bills: [], payments: {}, logs: [] }) }
+      else { setRemote(false); setData({ people: [], incomes: [], categories: [], types: [], bills: [], payments: {}, logs: [] }); setFamily({ members: [], invites: [] }) }
       setAuthReady(true)
     })
     return () => { active = false; subscription.unsubscribe() }
@@ -176,6 +178,47 @@ function useFinance() {
     const next = { ...preferences, ...updates }
     setPreferences(next)
     localStorage.setItem('conta-clara-preferences', JSON.stringify(next))
+  }
+  const loadFamily = async () => {
+    if (!supabase) return
+    const [members, invites] = await Promise.all([
+      supabase.from('family_members').select('user_id, email, joined_at').order('joined_at'),
+      supabase.from('family_invites').select('id, email, token, status, expires_at, created_at').eq('status', 'pending').order('created_at', { ascending: false })
+    ])
+    if (!members.error && !invites.error) setFamily({ members: members.data || [], invites: invites.data || [] })
+  }
+  const inviteFamilyMember = async email => {
+    if (!supabase) return 'A conexÃ£o com o Supabase nÃ£o estÃ¡ configurada.'
+    const redirectTo = new URL(window.location.origin)
+    const { data, error } = await supabase.functions.invoke('invite-family-member', { body: { email, redirectTo: redirectTo.toString() } })
+    if (error) return error.message || 'NÃ£o foi possÃ­vel enviar o convite.'
+    if (data?.token) {
+      redirectTo.searchParams.set('family-invite', data.token)
+      if (data.existingUser) {
+        const { error: magicLinkError } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo.toString(), shouldCreateUser: false } })
+        if (magicLinkError) return magicLinkError.message || 'NÃ£o foi possÃ­vel confirmar o e-mail do familiar.'
+      }
+      await loadFamily()
+      return ''
+    }
+    return 'O convite nÃ£o retornou uma confirmaÃ§Ã£o vÃ¡lida.'
+  }
+  const cancelFamilyInvite = async id => {
+    if (!supabase) return ''
+    const { error } = await supabase.rpc('cancel_family_invitation', { p_id: id })
+    if (!error) await loadFamily()
+    return error?.message || ''
+  }
+  const getFamilyInvitation = async token => {
+    if (!supabase || !token) return { data: null, error: '' }
+    const { data, error } = await supabase.rpc('get_family_invitation', { p_token: token })
+    return { data: data?.[0] || null, error: error?.message || '' }
+  }
+  const acceptFamilyInvitation = async token => {
+    if (!supabase) return 'A conexÃ£o com o Supabase nÃ£o estÃ¡ configurada.'
+    const { error } = await supabase.rpc('accept_family_invitation', { p_token: token })
+    if (!error) { await loadFamily(); window.history.replaceState({}, '', window.location.pathname) }
+    return error?.message || ''
   }
 
   const save = async (next, operation) => {
@@ -235,7 +278,7 @@ function useFinance() {
     const table = { people: 'people', incomes: 'income_payments', categories: 'expense_categories', types: 'expense_types', bills: 'bills' }[kind]
     return save(next, { table, action: 'delete', id })
   }
-  return { ...data, remote, user, authReady, connectionError, preferences, signIn, signInWithPasskey, signOut, registerPasskey, listPasskeys, removePasskey, changePassword, updateDisplayName, updatePreferences, addPerson, addIncome, addCategory, addType, addBill, updateBill, toggleBill, getStatus, remove }
+  return { ...data, family, remote, user, authReady, connectionError, preferences, signIn, signInWithPasskey, signOut, registerPasskey, listPasskeys, removePasskey, changePassword, updateDisplayName, updatePreferences, inviteFamilyMember, cancelFamilyInvite, getFamilyInvitation, acceptFamilyInvitation, addPerson, addIncome, addCategory, addType, addBill, updateBill, toggleBill, getStatus, remove }
 }
 
 function LoadingPage() {
@@ -275,6 +318,7 @@ function App() {
   const [modal, setModal] = useState(null)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [readNotifications, setReadNotifications] = useState([])
+  const [familyInvitationToken, setFamilyInvitationToken] = useState(() => new URLSearchParams(window.location.search).get('family-invite'))
   const notificationRef = useRef(null)
   const profileMenuRef = useRef(null)
   const current = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
@@ -293,6 +337,9 @@ function App() {
     document.addEventListener('pointerdown', closeOnOutsideClick)
     return () => document.removeEventListener('pointerdown', closeOnOutsideClick)
   }, [notificationsOpen, profileMenuOpen])
+  useEffect(() => {
+    if (familyInvitationToken && finance.user) setPage('settings')
+  }, [familyInvitationToken, finance.user])
   const markNotificationAsRead = id => setReadNotifications(currentRead => {
     if (currentRead.includes(id)) return currentRead
     const nextRead = [...currentRead, id]
@@ -339,11 +386,12 @@ function App() {
         onSave={bill => { finance.addBill(bill); setModal(null) }}
       />
     )}
-    {modal?.type === 'edit-bill' && <BillModal people={finance.people} categories={finance.categories} types={finance.types} initialPeriod={periodKey(current)} initialBill={modal.bill} onClose={() => setModal(null)} onSave={bill => { finance.updateBill(bill); setModal(null) }}/>}
-    {modal === 'card-bill' && <BillModal people={finance.people} categories={finance.categories} types={finance.types} initialPeriod={periodKey(current)} forceCreditCard onClose={() => setModal(null)} onSave={bill => { finance.addBill(bill); setModal(null) }}/>}
-    {modal?.type === 'income' && <IncomeModal person={modal.person} onClose={() => setModal(null)} onSave={income => { finance.addIncome(income); setModal(null) }}/>}
-    {modal === 'category' && <CategoryModal onClose={() => setModal(null)} onSave={category => { finance.addCategory(category); setModal(null) }}/>}
-    {modal === 'type' && <TypeModal onClose={() => setModal(null)} onSave={type => { finance.addType(type); setModal(null) }}/>}
+    {modal?.type === 'edit-bill' && <BillModal people={finance.people} categories={finance.categories} types={finance.types} initialPeriod={periodKey(current)} initialBill={modal.bill} onClose={() => setModal(null)} onSave={bill => { finance.updateBill(bill); setModal(null) }} />}
+    {modal === 'card-bill' && <BillModal people={finance.people} categories={finance.categories} types={finance.types} initialPeriod={periodKey(current)} forceCreditCard onClose={() => setModal(null)} onSave={bill => { finance.addBill(bill); setModal(null) }} />}
+    {modal?.type === 'income' && <IncomeModal person={modal.person} onClose={() => setModal(null)} onSave={income => { finance.addIncome(income); setModal(null) }} />}
+    {modal === 'category' && <CategoryModal onClose={() => setModal(null)} onSave={category => { finance.addCategory(category); setModal(null) }} />}
+    {modal === 'type' && <TypeModal onClose={() => setModal(null)} onSave={type => { finance.addType(type); setModal(null) }} />}
+    {familyInvitationToken && <FamilyInvitationModal token={familyInvitationToken} finance={finance} onClose={() => { window.history.replaceState({}, '', window.location.pathname); setFamilyInvitationToken(null) }} onAccepted={() => setFamilyInvitationToken(null) }/>}
   </div>
 }
 
@@ -431,7 +479,52 @@ function SettingsPage({ finance }) {
     link.click()
     URL.revokeObjectURL(url)
   }
-  return <section className="content settings-page"><div className="page-title"><div><p className="eyebrow">CONFIGURAÇÕES</p><h1>Seu espaço, suas regras.</h1><p className="sub">Gerencie acesso, preferências e uma cópia dos seus dados.</p></div></div><div className="settings-grid"><article className="panel settings-card account-card"><div className="settings-icon purple"><ShieldCheck/></div><h2>Conta protegida</h2><p>Você está conectado com segurança usando o Supabase.</p><div className="account-email"><span>{finance.user.email?.slice(0,2).toUpperCase()}</span><div><strong>{finance.user.email}</strong><small><CheckCircle2 size={13}/>E-mail autenticado</small></div></div></article><ProfileNameCard user={finance.user} updateDisplayName={finance.updateDisplayName}/><PasswordCard changePassword={finance.changePassword}/><PasskeyCard finance={finance}/><article className="panel settings-card"><div className="settings-icon coral"><CalendarDays/></div><h2>Visão de futuro</h2><p>Escolha o alcance da projeção apresentada na página inicial.</p><label className="settings-label">Meses na projeção<select value={finance.preferences.projectionMonths} onChange={event => finance.updatePreferences({ projectionMonths: Number(event.target.value) })}><option value="3">3 meses</option><option value="6">6 meses</option><option value="12">12 meses</option></select></label><small className="settings-note">Essa preferência fica salva neste dispositivo.</small></article><article className="panel settings-card"><div className="settings-icon green"><Database/></div><h2>Seus dados</h2><p>Faça uma cópia portátil das pessoas, receitas, contas e pagamentos.</p><button className="secondary settings-action" onClick={exportBackup}><Download size={16}/>Exportar backup (.json)</button><small className="settings-note">O arquivo não contém sua senha nem credenciais.</small></article><article className="panel settings-card privacy-card"><div className="settings-icon purple"><CreditCard/></div><h2>Privacidade financeira</h2><p>Seus dados são separados por usuário no banco. Nenhuma outra conta consegue visualizar seus lançamentos.</p><div className="privacy-badge"><ShieldCheck size={16}/>Protegido por RLS</div></article></div></section>
+  return <section className="content settings-page"><div className="page-title"><div><p className="eyebrow">CONFIGURAÇÕES</p><h1>Seu espaço, suas regras.</h1><p className="sub">Gerencie acesso, preferências e uma cópia dos seus dados.</p></div></div><div className="settings-grid"><article className="panel settings-card account-card"><div className="settings-icon purple"><ShieldCheck/></div><h2>Conta protegida</h2><p>Você está conectado com segurança usando o Supabase.</p><div className="account-email"><span>{finance.user.email?.slice(0,2).toUpperCase()}</span><div><strong>{finance.user.email}</strong><small><CheckCircle2 size={13}/>E-mail autenticado</small></div></div></article><ProfileNameCard user={finance.user} updateDisplayName={finance.updateDisplayName}/><PasswordCard changePassword={finance.changePassword}/><PasskeyCard finance={finance}/><FamilyCard finance={finance}/><article className="panel settings-card"><div className="settings-icon coral"><CalendarDays/></div><h2>Visão de futuro</h2><p>Escolha o alcance da projeção apresentada na página inicial.</p><label className="settings-label">Meses na projeção<select value={finance.preferences.projectionMonths} onChange={event => finance.updatePreferences({ projectionMonths: Number(event.target.value) })}><option value="3">3 meses</option><option value="6">6 meses</option><option value="12">12 meses</option></select></label><small className="settings-note">Essa preferência fica salva neste dispositivo.</small></article><article className="panel settings-card"><div className="settings-icon green"><Database/></div><h2>Seus dados</h2><p>Faça uma cópia portátil das pessoas, receitas, contas e pagamentos.</p><button className="secondary settings-action" onClick={exportBackup}><Download size={16}/>Exportar backup (.json)</button><small className="settings-note">O arquivo não contém sua senha nem credenciais.</small></article><article className="panel settings-card privacy-card"><div className="settings-icon purple"><CreditCard/></div><h2>Privacidade financeira</h2><p>Os dados desta família são protegidos por RLS e só ficam visíveis aos membros que aceitaram o convite por e-mail.</p><div className="privacy-badge"><ShieldCheck size={16}/>Família protegida por RLS</div></article></div></section>
+}
+
+function FamilyCard({ finance }) {
+  const [email, setEmail] = useState('')
+  const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(false)
+  const submit = async event => {
+    event.preventDefault()
+    setMessage('')
+    setLoading(true)
+    const error = await finance.inviteFamilyMember(email.trim().toLowerCase())
+    setLoading(false)
+    if (error) return setMessage(error)
+    setEmail('')
+    setMessage('Convite enviado. A pessoa precisa confirmar o e-mail e aceitar o compartilhamento.')
+  }
+  const cancel = async id => {
+    setLoading(true)
+    const error = await finance.cancelFamilyInvite(id)
+    setLoading(false)
+    setMessage(error || 'Convite cancelado.')
+  }
+  return <article className="panel settings-card family-card"><div className="settings-icon green"><Users/></div><h2>Família</h2><p>Todos os membros que aceitarem o convite podem consultar, criar e alterar os mesmos lançamentos.</p><div className="family-members">{finance.family.members.map(member => <div className="family-member" key={member.user_id}><span>{member.email.slice(0, 2).toUpperCase()}</span><strong>{member.email}{member.user_id === finance.user.id && ' (você)'}</strong></div>)}</div><form onSubmit={submit}><label className="settings-label">E-mail do familiar<input required type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="familiar@email.com"/></label>{message && <div className={message.startsWith('Convite enviado') || message.startsWith('Convite cancelado') ? 'settings-success' : 'login-error'}>{message}</div>}<button className="primary settings-action" disabled={loading}><UserPlus size={16}/>{loading ? 'Enviando…' : 'Convidar familiar'}</button></form>{finance.family.invites.length > 0 && <div className="family-pending"><small>CONVITES PENDENTES</small>{finance.family.invites.map(invite => <div key={invite.id}><span><Mail size={14}/>{invite.email}</span><button type="button" className="text-danger" disabled={loading} onClick={() => cancel(invite.id)}>Cancelar</button></div>)}</div>}<small className="settings-note">O convite expira em 7 dias. Cada pessoa confirma o próprio e-mail antes de entrar.</small></article>
+}
+
+function FamilyInvitationModal({ token, finance, onClose, onAccepted }) {
+  const [state, setState] = useState({ loading: true, valid: false, message: '' })
+  const [accepting, setAccepting] = useState(false)
+  useEffect(() => {
+    let active = true
+    finance.getFamilyInvitation(token).then(result => {
+      if (!active) return
+      if (result.error) return setState({ loading: false, valid: false, message: result.error })
+      setState({ loading: false, valid: Boolean(result.data), message: result.data ? '' : 'Este convite expirou, já foi usado ou foi enviado para outro e-mail.' })
+    })
+    return () => { active = false }
+  }, [token])
+  const accept = async () => {
+    setAccepting(true)
+    const error = await finance.acceptFamilyInvitation(token)
+    setAccepting(false)
+    if (error) return setState(current => ({ ...current, message: error }))
+    onAccepted()
+  }
+  return <Modal title="Convite para família" onClose={onClose}><div className="family-invitation">{state.loading ? <p>Verificando seu convite…</p> : state.valid ? <><div className="settings-icon green"><Users/></div><h3>Compartilhar este espaço financeiro?</h3><p>Ao aceitar, você terá os mesmos privilégios para visualizar, criar e editar os lançamentos desta família.</p>{state.message && <div className="login-error">{state.message}</div>}<div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Agora não</button><button className="primary" onClick={accept} disabled={accepting}>{accepting ? 'Aceitando…' : 'Aceitar convite'}</button></div></> : <><div className="login-error">{state.message}</div><div className="modal-actions"><button type="button" className="primary" onClick={onClose}>Fechar</button></div></>}</div></Modal>
 }
 
 function ProfileNameCard({ user, updateDisplayName }) {
