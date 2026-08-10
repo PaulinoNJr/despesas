@@ -24,6 +24,7 @@ create table if not exists public.bills (
   start_period text check (start_period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
   flow text not null default 'payable' check (flow in ('payable', 'receivable')),
   is_credit_card boolean not null default false,
+  card_name text check (char_length(trim(card_name)) between 1 and 80),
   check ((installments is null) = (start_period is null)),
   created_at timestamptz not null default now()
 );
@@ -34,6 +35,7 @@ alter table public.bills add column if not exists installments smallint;
 alter table public.bills add column if not exists start_period text;
 alter table public.bills add column if not exists flow text not null default 'payable';
 alter table public.bills add column if not exists is_credit_card boolean not null default false;
+alter table public.bills add column if not exists card_name text;
 alter table public.bills drop constraint if exists bills_installments_check;
 alter table public.bills drop constraint if exists bills_start_period_check;
 alter table public.bills drop constraint if exists bills_installment_period_check;
@@ -45,6 +47,7 @@ alter table public.bills add constraint bills_flow_check check (flow in ('payabl
 
 -- Separa lançamentos de cartão já cadastrados pelo nome, sem alterar os demais.
 update public.bills set is_credit_card = true where lower(name) like '%cartão%' or lower(name) like '%cartao%';
+update public.bills set card_name = name where is_credit_card = true and card_name is null;
 
 create table if not exists public.income_payments (
   id uuid primary key default gen_random_uuid(),
