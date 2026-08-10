@@ -1,4 +1,4 @@
-const CACHE = 'conta-certa-v1'
+const CACHE = 'conta-certa-v2'
 const ASSETS = ['/', '/manifest.webmanifest', '/icon.svg']
 self.addEventListener('install', event => event.waitUntil(
   caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting())
