@@ -459,7 +459,7 @@ function Dashboard({ finance, displayName, current, offset, setOffset, openModal
   const cardInstallments = payables.filter(isCreditCardBill)
   const cardInvoiceTotal = cardInstallments.reduce((sum, bill) => sum + bill.value, 0)
   const cardInvoicePaid = cardInstallments.filter(bill => bill.status === 'paid').reduce((sum, bill) => sum + bill.value, 0)
-  const incomeDetail = `${receivables.length} conta${receivables.length !== 1 ? 's' : ''} a receber${finance.incomes.length ? ` · ${finance.incomes.length} recebimento${finance.incomes.length !== 1 ? 's' : ''} recorrente${finance.incomes.length !== 1 ? 's' : ''}` : ''}`
+  const incomeDetail = `${receivables.length} conta${receivables.length !== 1 ? 's' : ''} a receber`
   const recurringIncome = finance.incomes.reduce((sum, item) => sum + item.value, 0)
   const income = recurringIncome + receivables.reduce((sum, bill) => sum + bill.value, 0)
   const expenses = payables.reduce((sum, bill) => sum + bill.value, 0)
