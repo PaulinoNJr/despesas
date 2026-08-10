@@ -11,13 +11,13 @@ npm run dev
 
 ## Supabase
 
-1. Execute [`supabase/schema.sql`](./supabase/schema.sql) no SQL Editor. Se você já usava uma versão anterior, execute **somente** [`supabase/migrate-existing-project.sql`](./supabase/migrate-existing-project.sql).
+1. Execute somente [`supabase/setup.sql`](./supabase/setup.sql) no SQL Editor. O arquivo funciona para uma base nova ou para atualizar uma versão anterior sem remover lançamentos.
 2. Copie `.env.example` para `.env.local` e preencha URL e a **Publishable key**. A chave legada `VITE_SUPABASE_ANON_KEY` também é aceita.
 3. Crie os acessos em **Authentication > Users** no painel do Supabase. A aplicação usa e-mail e senha e o banco usa RLS para isolar os dados de cada usuário.
 
 Sem essas variáveis, a aplicação mantém os dados apenas neste navegador, permitindo testar toda a interface.
 
-Se o banco já foi criado com uma versão mais antiga do projeto, a migração também cria a tabela de múltiplos recebimentos por pessoa. Depois disso, desative **Anonymous sign-ins** e **Enable sign ups** em **Authentication > Providers > Email**, pois os usuários são criados manualmente pelo administrador.
+Depois disso, desative **Anonymous sign-ins** e **Enable sign ups** em **Authentication > Providers > Email**, pois os usuários são criados manualmente pelo administrador.
 
 ### Checklist de segurança
 
