@@ -1,4 +1,4 @@
-# Conta Clara
+# Conta Certa
 
 Aplicação PWA para acompanhar receitas, contas fixas e despesas flutuantes.
 

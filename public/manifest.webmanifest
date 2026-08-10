@@ -1,6 +1,6 @@
 {
-  "name": "Conta Clara",
-  "short_name": "Conta Clara",
+  "name": "Conta Certa",
+  "short_name": "Conta Certa",
   "description": "Controle das contas mensais da casa",
   "start_url": "/",
   "display": "standalone",

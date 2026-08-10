@@ -239,7 +239,7 @@ function useFinance() {
 }
 
 function LoadingPage() {
-  return <div className="auth-page"><div className="auth-card loading-card"><span className="brand-mark"><CircleDollarSign size={26}/></span><h1>Conta Clara</h1><p>Verificando sua sessão…</p><div className="loader"/></div></div>
+  return <div className="auth-page"><div className="auth-card loading-card"><span className="brand-mark"><CircleDollarSign size={26}/></span><h1>Conta Certa</h1><p>Verificando sua sessão…</p><div className="loader"/></div></div>
 }
 
 function LoginPage({ onLogin, onPasskeyLogin, missingConfig, connectionError }) {
@@ -263,7 +263,7 @@ function LoginPage({ onLogin, onPasskeyLogin, missingConfig, connectionError }) 
     setLoading(false)
     if (message) setError(message)
   }
-  return <div className="auth-page"><div className="auth-orb orb-one"/><div className="auth-orb orb-two"/><section className="auth-card"><div className="auth-brand"><span className="brand-mark"><CircleDollarSign size={26}/></span><span>conta<span>clara</span></span></div>{missingConfig ? <><h1>Configuração necessária</h1><p>Adicione as variáveis do Supabase na Vercel para liberar o acesso.</p></> : <><div className="lock-circle"><LockKeyhole size={21}/></div><p className="eyebrow">ÁREA RESTRITA</p><h1>Bem-vindo de volta</h1><p>Entre para acompanhar as contas da sua casa.</p><form onSubmit={submit}><label>E-mail<input autoFocus type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} placeholder="voce@email.com"/></label><label>Senha<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Sua senha"/></label>{(error || connectionError) && <div className="login-error">{error || connectionError}</div>}<button className="primary login-submit" disabled={loading}>{loading ? 'Entrando…' : 'Entrar na conta'}</button>{onPasskeyLogin && <button type="button" className="secondary passkey-login" onClick={passkeyLogin} disabled={loading}><Fingerprint size={16}/>Entrar com Face ID ou digital</button>}</form><small className="auth-hint">Seu acesso é criado pelo administrador da aplicação.</small></>}</section></div>
+  return <div className="auth-page"><div className="auth-orb orb-one"/><div className="auth-orb orb-two"/><section className="auth-card"><div className="auth-brand"><span className="brand-mark"><CircleDollarSign size={26}/></span><span>Conta <span>Certa</span></span></div>{missingConfig ? <><h1>Configuração necessária</h1><p>Adicione as variáveis do Supabase na Vercel para liberar o acesso.</p></> : <><div className="lock-circle"><LockKeyhole size={21}/></div><p className="eyebrow">ÁREA RESTRITA</p><h1>Bem-vindo de volta</h1><p>Entre para acompanhar as contas da sua casa.</p><form onSubmit={submit}><label>E-mail<input autoFocus type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} placeholder="voce@email.com"/></label><label>Senha<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Sua senha"/></label>{(error || connectionError) && <div className="login-error">{error || connectionError}</div>}<button className="primary login-submit" disabled={loading}>{loading ? 'Entrando…' : 'Entrar na conta'}</button>{onPasskeyLogin && <button type="button" className="secondary passkey-login" onClick={passkeyLogin} disabled={loading}><Fingerprint size={16}/>Entrar com Face ID ou digital</button>}</form><small className="auth-hint">Seu acesso é criado pelo administrador da aplicação.</small></>}</section></div>
 }
 
 function App() {
@@ -313,13 +313,13 @@ function App() {
 
   return <div className="app-shell">
     <aside className={menuOpen ? 'sidebar open' : 'sidebar'}>
-      <div className="brand"><span className="brand-mark"><CircleDollarSign size={23}/></span><span>conta<span>clara</span></span><button className="mobile-close" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
+      <div className="brand"><span className="brand-mark"><CircleDollarSign size={23}/></span><span>Conta <span>Certa</span></span><button className="mobile-close" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
       <nav>{nav.map(item => <button key={item.id} onClick={() => navigate(item.id)} className={page === item.id ? 'active' : ''}><item.icon size={19}/>{item.label}</button>)}</nav>
       <div className="sidebar-bottom"><button onClick={() => navigate('settings')} className={page === 'settings' ? 'active' : ''}><Settings size={19}/>Configurações</button><div className="profile"><div className="avatar">{displayName.slice(0,2).toUpperCase()}</div><div><strong>{displayName}</strong><small>{finance.user.email}</small></div><div className="profile-menu-wrap" ref={profileMenuRef}><button className="profile-more" title="Opções da conta" onClick={() => setProfileMenuOpen(!profileMenuOpen)}><MoreHorizontal size={18}/></button>{profileMenuOpen && <div className="profile-popover"><button onClick={() => { setProfileMenuOpen(false); finance.signOut() }}><LogOut size={16}/>Sair da conta</button></div>}</div></div></div>
     </aside>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
     <main>
-      <header><button className="menu-btn" onClick={() => setMenuOpen(true)}><Menu/></button><div className="mobile-title">conta<span>clara</span></div><div className="header-actions"><div className="notification-wrap" ref={notificationRef}><button className="icon-button" title={unreadCount ? `${unreadCount} nova${unreadCount > 1 ? 's' : ''} mensagem${unreadCount > 1 ? 's' : ''}` : 'Notificações'} aria-label="Abrir notificações" onClick={() => setNotificationsOpen(open => !open)}><Bell size={19}/>{unreadCount > 0 && <i/>}</button>{notificationsOpen && <NotificationPanel notifications={notifications} readNotifications={readNotifications} onRead={markNotificationAsRead} onReadAll={markAllNotificationsAsRead}/>}</div></div></header>
+      <header><button className="menu-btn" onClick={() => setMenuOpen(true)}><Menu/></button><div className="mobile-title">Conta <span>Certa</span></div><div className="header-actions"><div className="notification-wrap" ref={notificationRef}><button className="icon-button" title={unreadCount ? `${unreadCount} nova${unreadCount > 1 ? 's' : ''} mensagem${unreadCount > 1 ? 's' : ''}` : 'Notificações'} aria-label="Abrir notificações" onClick={() => setNotificationsOpen(open => !open)}><Bell size={19}/>{unreadCount > 0 && <i/>}</button>{notificationsOpen && <NotificationPanel notifications={notifications} readNotifications={readNotifications} onRead={markNotificationAsRead} onReadAll={markAllNotificationsAsRead}/>}</div></div></header>
       {page === 'home' && <Dashboard finance={finance} displayName={displayName} current={current} offset={monthOffset} setOffset={setMonthOffset} openModal={setModal}/>}
       {page === 'people' && <People finance={finance} openModal={setModal}/>}
       {page === 'bills' && <Bills finance={finance} openModal={setModal}/>}
@@ -427,7 +427,7 @@ function SettingsPage({ finance }) {
     const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }))
     const link = document.createElement('a')
     link.href = url
-    link.download = `conta-clara-backup-${new Date().toISOString().slice(0, 10)}.json`
+    link.download = `conta-certa-backup-${new Date().toISOString().slice(0, 10)}.json`
     link.click()
     URL.revokeObjectURL(url)
   }
