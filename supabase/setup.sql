@@ -151,7 +151,7 @@ select users.id from auth.users users
 on conflict (id) do nothing;
 
 insert into public.family_members (family_id, user_id, email)
-select users.id, users.id, lower(users.email)
+select users.id, users.id, coalesce(lower(nullif(trim(users.email), '')), 'account-' || users.id::text || '@internal.local')
 from auth.users users
 on conflict (user_id) do nothing;
 
@@ -165,7 +165,7 @@ as $$
 begin
   insert into public.families (id) values (new.id) on conflict (id) do nothing;
   insert into public.family_members (family_id, user_id, email)
-  values (new.id, new.id, lower(new.email))
+  values (new.id, new.id, coalesce(lower(nullif(trim(new.email), '')), 'account-' || new.id::text || '@internal.local'))
   on conflict (user_id) do nothing;
   return new;
 end;
