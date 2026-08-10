@@ -23,6 +23,7 @@ create table if not exists public.bills (
   responsible uuid references public.people(id) on delete set null,
   installments smallint check (installments between 1 and 360),
   start_period text check (start_period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  flow text not null default 'payable' check (flow in ('payable', 'receivable')),
   check ((installments is null) = (start_period is null)),
   created_at timestamptz not null default now()
 );
@@ -64,6 +65,16 @@ create table if not exists public.bill_payments (
   primary key (bill_id, period)
 );
 
+-- Registra alterações nos lançamentos para auditoria do usuário.
+create table if not exists public.audit_logs (
+  id uuid primary key,
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  entity_id uuid not null,
+  action text not null check (action = 'updated'),
+  changes jsonb not null,
+  created_at timestamptz not null default now()
+);
+
 -- Segurança: cada usuário autenticado só enxerga os próprios dados.
 alter table public.people enable row level security;
 alter table public.bills enable row level security;
@@ -71,6 +82,7 @@ alter table public.income_payments enable row level security;
 alter table public.expense_categories enable row level security;
 alter table public.expense_types enable row level security;
 alter table public.bill_payments enable row level security;
+alter table public.audit_logs enable row level security;
 
 -- Impede que o dono da tabela ignore as politicas por acidente e evita acesso
 -- direto pelo papel anon. A service_role continua exclusiva para processos no servidor.
@@ -80,9 +92,10 @@ alter table public.income_payments force row level security;
 alter table public.expense_categories force row level security;
 alter table public.expense_types force row level security;
 alter table public.bill_payments force row level security;
+alter table public.audit_logs force row level security;
 
-revoke all on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments from anon;
-grant select, insert, update, delete on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments to authenticated;
+revoke all on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments, public.audit_logs from anon;
+grant select, insert, update, delete on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments, public.audit_logs to authenticated;
 
 drop policy if exists "people_owner_only" on public.people;
 drop policy if exists "bills_owner_only" on public.bills;
@@ -90,6 +103,7 @@ drop policy if exists "income_payments_owner_only" on public.income_payments;
 drop policy if exists "expense_categories_owner_only" on public.expense_categories;
 drop policy if exists "expense_types_owner_only" on public.expense_types;
 drop policy if exists "payments_owner_only" on public.bill_payments;
+drop policy if exists "audit_logs_owner_only" on public.audit_logs;
 
 create policy "people_owner_only" on public.people
   for all to authenticated
@@ -133,6 +147,11 @@ create policy "payments_owner_only" on public.bill_payments
   using (exists (select 1 from public.bills where bills.id = bill_payments.bill_id and bills.owner_id = (select auth.uid())))
   with check (exists (select 1 from public.bills where bills.id = bill_payments.bill_id and bills.owner_id = (select auth.uid())));
 
+create policy "audit_logs_owner_only" on public.audit_logs
+  for all to authenticated
+  using ((select auth.uid()) = owner_id)
+  with check ((select auth.uid()) = owner_id);
+
 -- Indices para as consultas filtradas pelas politicas RLS e pelos relacionamentos.
 create index if not exists people_owner_id_idx on public.people(owner_id);
 create index if not exists bills_owner_id_idx on public.bills(owner_id);
@@ -141,3 +160,4 @@ create index if not exists income_payments_owner_id_idx on public.income_payment
 create index if not exists income_payments_person_id_idx on public.income_payments(person_id);
 create index if not exists expense_categories_owner_id_idx on public.expense_categories(owner_id);
 create index if not exists expense_types_owner_id_idx on public.expense_types(owner_id);
+create index if not exists audit_logs_owner_created_at_idx on public.audit_logs(owner_id, created_at desc);
