@@ -249,7 +249,7 @@ function useFinance() {
   }
   const addCategory = category => save({ ...data, categories: [...data.categories, category] }, { table: 'expense_categories', action: 'insert', payload: category })
   const addType = type => save({ ...data, types: [...data.types, type] }, { table: 'expense_types', action: 'insert', payload: type })
-  const addBill = bill => save({ ...data, bills: [...data.bills, bill] }, { table: 'bills', action: 'insert', payload: { id: bill.id, name: bill.name, value: bill.value, due_day: bill.dueDay, type: bill.type, category: bill.category, responsible: bill.responsible, installments: bill.installments || null, start_period: bill.startPeriod || null, flow: bill.flow || 'payable', is_credit_card: Boolean(bill.isCreditCard), card_name: bill.isCreditCard ? bill.cardName : null, card_invoice_id: bill.cardInvoiceId || null } })
+  const addBill = bill => save({ ...data, bills: [...data.bills, bill] }, { table: 'bills', action: 'insert', payload: { id: bill.id, name: bill.name, value: bill.value, due_day: bill.dueDay, type: bill.type, category: bill.category, responsible: bill.responsible || null, installments: bill.installments || null, start_period: bill.startPeriod || null, flow: bill.flow || 'payable', is_credit_card: Boolean(bill.isCreditCard), card_name: bill.isCreditCard ? bill.cardName : null, card_invoice_id: bill.cardInvoiceId || null } })
   const updateBill = async bill => {
     const existingBill = data.bills.find(item => item.id === bill.id)
     if (!existingBill) return
@@ -259,7 +259,7 @@ function useFinance() {
     const next = { ...data, bills: data.bills.map(item => item.id === bill.id ? updatedBill : item), logs: [log, ...(data.logs || [])] }
     setData(next)
     if (!supabase) { localStorage.setItem('conta-clara-data', JSON.stringify(next)); return }
-    const payload = { name: updatedBill.name, value: updatedBill.value, due_day: updatedBill.dueDay, type: updatedBill.type, category: updatedBill.category, responsible: updatedBill.responsible, installments: updatedBill.installments || null, start_period: updatedBill.startPeriod || null, flow: updatedBill.flow, is_credit_card: updatedBill.isCreditCard, card_name: updatedBill.cardName || null, card_invoice_id: updatedBill.cardInvoiceId || null }
+    const payload = { name: updatedBill.name, value: updatedBill.value, due_day: updatedBill.dueDay, type: updatedBill.type, category: updatedBill.category, responsible: updatedBill.responsible || null, installments: updatedBill.installments || null, start_period: updatedBill.startPeriod || null, flow: updatedBill.flow, is_credit_card: updatedBill.isCreditCard, card_name: updatedBill.cardName || null, card_invoice_id: updatedBill.cardInvoiceId || null }
     await Promise.all([supabase.from('bills').update(payload).eq('id', bill.id), supabase.from('audit_logs').insert({ id: log.id, entity_id: log.entityId, action: log.action, changes: log.changes, created_at: log.createdAt })])
   }
   const getStatus = (bill, period) => data.payments?.[`${bill.id}:${period}`] || 'pending'
