@@ -651,42 +651,38 @@ function CreditCardBills({ finance, openModal }) {
 }
 
 function CardInvoiceReviewModal({ finance, initialReview, onClose }) {
-  const [invoice, setInvoice] = useState(initialReview.invoice)
-  const [fileName, setFileName] = useState(initialReview.fileName)
-  const [loading, setLoading] = useState(false)
-  const [reading, setReading] = useState({ current: 0, total: 0, label: '' })
+  const invoice = initialReview?.invoice || null
+  const [entries, setEntries] = useState(() => Array.isArray(invoice?.entries) ? invoice.entries.map(entry => ({
+    id: String(entry?.id || crypto.randomUUID()),
+    description: String(entry?.description || ''),
+    date: typeof entry?.date === 'string' ? entry.date : '',
+    installmentLabel: typeof entry?.installmentLabel === 'string' ? entry.installmentLabel : '',
+    value: Number(entry?.value) || 0,
+    installmentsLeft: Math.max(1, Number(entry?.installmentsLeft) || 1),
+    category: typeof entry?.category === 'string' ? entry.category : 'Outros',
+    included: entry?.included !== false,
+  })) : [])
   const [message, setMessage] = useState('')
-  const [cardName, setCardName] = useState(initialReview.invoice.issuer)
+  const [cardName, setCardName] = useState(() => String(invoice?.issuer || 'Cartão de crédito'))
   const [saving, setSaving] = useState(false)
-  const readFile = async event => {
-    const file = event.target.files?.[0]
-    if (!file) return
-    setLoading(true); setMessage(''); setReading({ current: 0, total: 0, label: 'Preparando a leitura…' })
-    try {
-      await new Promise(resolve => requestAnimationFrame(resolve))
-      const { parseCreditCardInvoicePdf } = await import('./card-invoice-parser')
-      const parsed = await parseCreditCardInvoicePdf(file, { onProgress: setReading })
-      setInvoice(parsed); setFileName(file.name); setCardName(parsed.issuer)
-    } catch (error) { setMessage(error.message || 'Não foi possível ler esta fatura.') }
-    setLoading(false)
-  }
-  const updateEntry = (id, updates) => setInvoice(current => ({ ...current, entries: current.entries.map(entry => entry.id === id ? { ...entry, ...updates } : entry) }))
-  const selectedEntries = invoice?.entries.filter(entry => entry.included) || []
+  const updateEntry = (id, updates) => setEntries(current => current.map(entry => entry.id === id ? { ...entry, ...updates } : entry))
+  const selectedEntries = entries.filter(entry => entry.included)
   const selectedTotal = selectedEntries.reduce((sum, entry) => sum + Number(entry.value || 0), 0)
-  const isExact = invoice && Math.abs(selectedTotal - invoice.total) < 0.01
+  const invoiceTotal = Number(invoice?.total) || 0
+  const isExact = Boolean(invoice) && Math.abs(selectedTotal - invoiceTotal) < 0.01
   const confirm = async () => {
     if (!invoice || !isExact || !cardName.trim()) return
     setSaving(true); setMessage('')
-    const dueDate = invoice.dueDate.split('/').reverse().join('-')
-    const savedInvoice = { id: crypto.randomUUID(), cardName: cardName.trim(), invoiceKey: invoice.invoiceKey, statementTotal: invoice.total, dueDate, sourceFileName: fileName }
-    const bills = selectedEntries.filter(entry => Number(entry.value) !== 0).map(entry => ({ id: crypto.randomUUID(), name: entry.description, value: Number(entry.value), dueDay: invoice.dueDay, type: entry.installmentsLeft > 1 ? 'Parcelada' : 'Fatura importada', category: entry.category || 'Outros', responsible: '', installments: Math.max(1, Number(entry.installmentsLeft) || 1), startPeriod: invoice.period, flow: 'payable', isCreditCard: true, cardName: cardName.trim(), status: 'pending' }))
+    const dueDate = String(invoice.dueDate || '').split('/').reverse().join('-')
+    const savedInvoice = { id: crypto.randomUUID(), cardName: cardName.trim(), invoiceKey: String(invoice.invoiceKey || crypto.randomUUID()), statementTotal: invoiceTotal, dueDate, sourceFileName: String(initialReview?.fileName || '') }
+    const bills = selectedEntries.filter(entry => Number(entry.value) !== 0).map(entry => ({ id: crypto.randomUUID(), name: String(entry.description || 'Compra no cartão'), value: Number(entry.value), dueDay: Number(invoice.dueDay) || 1, type: entry.installmentsLeft > 1 ? 'Parcelada' : 'Fatura importada', category: String(entry.category || 'Outros'), responsible: '', installments: Math.max(1, Number(entry.installmentsLeft) || 1), startPeriod: String(invoice.period || currentPeriod()), flow: 'payable', isCreditCard: true, cardName: cardName.trim(), status: 'pending' }))
     const error = await finance.importCardInvoice({ invoice: savedInvoice, bills })
     setSaving(false)
-    if (error) return setMessage(error)
+    if (error) return setMessage(String(error))
     onClose()
   }
-  if (!invoice && !loading) return <Modal title="Importar fatura do cartão" onClose={onClose}><div className="invoice-import"><h3>Leia sua fatura em PDF</h3><p>Os dados são processados neste navegador. Detectaremos o total, as compras e parcelas antes de gravar qualquer lançamento.</p><label className="invoice-file"><input type="file" accept="application/pdf,.pdf" onChange={readFile}/>Selecionar PDF da fatura</label>{typeof message === 'string' && message && <div className="login-error">{message}</div>}</div></Modal>
-  return <Modal title="Importar fatura do cartão" onClose={onClose}><div className="invoice-import">{loading ? <div className="invoice-reading"><div className="invoice-reader-icon"><CreditCard size={23}/></div><h3>Lendo sua fatura</h3><p>{reading.label || 'Analisando o PDF…'}</p><div className="invoice-reading-bar"><span style={{ width: `${reading.total ? Math.max(8, (reading.current / reading.total) * 100) : 18}%` }}/></div><small>{reading.total ? `Página ${Math.min(reading.current + 1, reading.total)} de ${reading.total}` : 'Isso pode levar alguns segundos.'}</small></div> : !invoice ? <><div className="settings-icon purple"><CreditCard/></div><h3>Leia sua fatura em PDF</h3><p>Os dados são processados neste navegador. Detectaremos o total, as compras e parcelas antes de gravar qualquer lançamento.</p><label className="invoice-file"><input type="file" accept="application/pdf,.pdf" onChange={readFile}/><Download size={18}/>Selecionar PDF da fatura</label>{message && <div className="login-error">{message}</div>}</> : <><div className="invoice-summary"><div><span>IDENTIFICADOR</span><strong>{invoice.invoiceKey}</strong></div><div><span>VENCIMENTO</span><strong>{invoice.dueDate}</strong></div><div><span>TOTAL DA FATURA</span><strong>{money(invoice.total)}</strong></div></div><label>Cartão<input value={cardName} onChange={event => setCardName(event.target.value)} required/></label><div className="invoice-review-head"><strong>Lançamentos identificados</strong><span className={isExact ? 'exact' : 'not-exact'}>{isExact ? 'Total confere' : `Diferença de ${money(invoice.total - selectedTotal)}`}</span></div><div className="invoice-entry-list">{invoice.entries.map(entry => <div className="invoice-entry" key={entry.id}><input type="checkbox" checked={entry.included} onChange={event => updateEntry(entry.id, { included: event.target.checked })}/><div><input value={entry.description} onChange={event => updateEntry(entry.id, { description: event.target.value })}/><small>{entry.date || 'Ajuste da fatura'}{entry.installmentLabel && ` · parcela ${entry.installmentLabel}`}</small></div><input className="invoice-value" type="number" step="0.01" value={entry.value} onChange={event => updateEntry(entry.id, { value: Number(event.target.value) })}/><label className="invoice-installments">Restam<input type="number" min="1" max="360" value={entry.installmentsLeft} onChange={event => updateEntry(entry.id, { installmentsLeft: event.target.value })}/></label></div>)}</div>{message && <div className="login-error">{message}</div>}<p className="modal-note">Revise os lançamentos. Compras parceladas continuarão na projeção apenas pelo número de parcelas restantes informado na fatura.</p><div className="modal-actions"><button type="button" className="secondary" onClick={() => setInvoice(null)}>Trocar PDF</button><button className="primary" disabled={!isExact || saving || !cardName.trim()} onClick={confirm}>{saving ? 'Importando…' : 'Confirmar e importar'}</button></div></>}</div></Modal>
+  if (!invoice || !Array.isArray(invoice.entries)) return <Modal title="Importar fatura do cartão" onClose={onClose}><div className="invoice-import"><div className="login-error">Não foi possível preparar a confirmação da fatura. Selecione o arquivo novamente.</div></div></Modal>
+  return <Modal title="Conferir fatura do cartão" onClose={onClose}><div className="invoice-import"><div className="invoice-summary"><div><span>IDENTIFICADOR</span><strong>{String(invoice.invoiceKey || 'Fatura importada')}</strong></div><div><span>VENCIMENTO</span><strong>{String(invoice.dueDate || 'Não identificado')}</strong></div><div><span>TOTAL DA FATURA</span><strong>{money(invoiceTotal)}</strong></div></div><label>Cartão<input value={cardName} onChange={event => setCardName(event.target.value)} required/></label><div className="invoice-review-head"><strong>Lançamentos identificados</strong><span className={isExact ? 'exact' : 'not-exact'}>{isExact ? 'Total confere' : `Diferença de ${money(invoiceTotal - selectedTotal)}`}</span></div><div className="invoice-entry-list">{entries.map(entry => <div className="invoice-entry" key={entry.id}><input type="checkbox" checked={Boolean(entry.included)} onChange={event => updateEntry(entry.id, { included: event.target.checked })}/><div><input value={String(entry.description)} onChange={event => updateEntry(entry.id, { description: event.target.value })}/><small>{entry.date || 'Ajuste da fatura'}{entry.installmentLabel ? ` · parcela ${entry.installmentLabel}` : ''}</small></div><input className="invoice-value" type="number" step="0.01" value={Number(entry.value) || 0} onChange={event => updateEntry(entry.id, { value: Number(event.target.value) || 0 })}/><label className="invoice-installments">Restam<input type="number" min="1" max="360" value={Math.max(1, Number(entry.installmentsLeft) || 1)} onChange={event => updateEntry(entry.id, { installmentsLeft: Number(event.target.value) || 1 })}/></label></div>)}</div>{message && <div className="login-error">{message}</div>}<p className="modal-note">Revise os lançamentos. Compras parceladas continuarão na projeção apenas pelo número de parcelas restantes informado na fatura.</p><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary" disabled={!isExact || saving || !cardName.trim()} onClick={confirm}>{saving ? 'Importando…' : 'Confirmar e importar'}</button></div></div></Modal>
 }
 
 function Modal({ title, children, onClose }) { return <div className="modal-backdrop"><div className="modal"><div className="modal-head"><h2>{title}</h2><button className="icon-button" onClick={onClose}><X size={20}/></button></div>{children}</div></div> }
