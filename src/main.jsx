@@ -411,7 +411,7 @@ function App() {
     )}
     {modal?.type === 'edit-bill' && <BillModal people={finance.people} categories={finance.categories} types={finance.types} initialPeriod={periodKey(current)} initialBill={modal.bill} onClose={() => setModal(null)} onSave={bill => { finance.updateBill(bill); setModal(null) }} />}
     {modal === 'card-bill' && <BillModal people={finance.people} categories={finance.categories} types={finance.types} initialPeriod={periodKey(current)} forceCreditCard onClose={() => setModal(null)} onSave={bill => { finance.addBill(bill); setModal(null) }} />}
-    {modal === 'import-card-invoice' && <CardInvoiceImportModal finance={finance} onClose={() => setModal(null)} />}
+    {modal?.type === 'review-card-invoice' && <CardInvoiceReviewModal finance={finance} initialReview={modal.review} onClose={() => setModal(null)} />}
     {modal?.type === 'income' && <IncomeModal person={modal.person} onClose={() => setModal(null)} onSave={income => { finance.addIncome(income); setModal(null) }} />}
     {modal === 'category' && <CategoryModal onClose={() => setModal(null)} onSave={category => { finance.addCategory(category); setModal(null) }} />}
     {modal === 'type' && <TypeModal onClose={() => setModal(null)} onSave={type => { finance.addType(type); setModal(null) }} />}
@@ -622,6 +622,9 @@ function Bills({ finance, openModal }) {
 
 function CreditCardBills({ finance, openModal }) {
   const period = periodKey(today)
+  const fileInputRef = useRef(null)
+  const [importing, setImporting] = useState(false)
+  const [importMessage, setImportMessage] = useState('')
   const bills = finance.bills.filter(bill => isCreditCardBill(bill) && isBillActiveInPeriod(bill, period)).map(bill => ({ ...bill, status: finance.getStatus(bill, period) })).sort((a, b) => a.dueDay - b.dueDay)
   const total = bills.reduce((sum, bill) => sum + bill.value, 0)
   const cards = Object.values(bills.reduce((groups, bill) => {
@@ -630,16 +633,30 @@ function CreditCardBills({ finance, openModal }) {
     groups[name].bills.push(bill); groups[name].total += bill.value
     return groups
   }, {}))
-  return <section className="content"><div className="page-title"><div><p className="eyebrow">CARTÃO DE CRÉDITO</p><h1>Compras no cartão</h1><p className="sub">Cada fatura é a soma das compras e parcelas vinculadas ao mesmo cartão.</p></div><div className="card-actions"><button className="secondary" onClick={() => openModal('import-card-invoice')}><Download size={17}/>Importar fatura</button><button className="primary" onClick={() => openModal('card-bill')}><Plus size={18}/>Nova compra no cartão</button></div></div><div className="cards credit-summary"><Metric label="Fatura total" value={money(total)} icon={<CreditCard/>} tint="coral" detail={`${bills.length} lançamento${bills.length !== 1 ? 's' : ''} no cartão`}/><Metric label="Cartões ativos" value={String(cards.length)} icon={<CalendarDays/>} tint="purple" detail="Faturas calculadas por cartão"/></div><div className="card-invoice-list">{cards.map(card => <article className="panel card-invoice" key={card.name}><div><span>FATURA · {card.name}</span><strong>{money(card.total)}</strong></div><small>{card.bills.length} compra{card.bills.length !== 1 ? 's' : ''} lançada{card.bills.length !== 1 ? 's' : ''}</small></article>)}</div><article className="panel table-panel credit-table"><div className="table-head"><span>DESCRIÇÃO</span><span>TIPO</span><span>VENCIMENTO</span><span>RESPONSÁVEL</span><span>VALOR</span><span>STATUS</span><span/><span/></div>{bills.map(bill => { const person = finance.people.find(item => item.id === bill.responsible); return <div className="table-row" key={bill.id}><div><b>{bill.name}</b><small>{bill.cardName || 'Cartão de crédito'} · {bill.category}{bill.installments ? ` · ${bill.installments} parcela${bill.installments > 1 ? 's' : ''}` : ''}</small></div><span className={`tag ${bill.type === 'Fixa' ? 'fixed' : 'variable'}`}>{bill.type}</span><span>Dia {bill.dueDay}</span><span>{person?.name || '—'}</span><strong>{money(bill.value)}</strong><button className={bill.status === 'paid' ? 'status paid-status clickable' : 'status clickable'} onClick={() => finance.toggleBill(bill, period)}>{bill.status === 'paid' ? 'Pago' : 'Pendente'}</button><button className="edit" title="Editar lançamento" onClick={() => openModal({ type: 'edit-bill', bill })}><Pencil size={15}/></button><button className="delete" onClick={() => finance.remove('bills', bill.id)}><Trash2 size={16}/></button></div> })}{!bills.length && <Empty text="Nenhuma compra no cartão para este mês."/>}</article></section>
+  const readInvoice = async event => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setImporting(true); setImportMessage('Lendo sua fatura…')
+    try {
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      const { parseCreditCardInvoicePdf } = await import('./card-invoice-parser')
+      const invoice = await parseCreditCardInvoicePdf(file, { onProgress: progress => setImportMessage(progress.label) })
+      openModal({ type: 'review-card-invoice', review: { invoice, fileName: file.name } })
+      setImportMessage('')
+    } catch (error) { setImportMessage(error?.message || 'Não foi possível ler esta fatura.') }
+    setImporting(false)
+  }
+  return <section className="content"><input className="visually-hidden" ref={fileInputRef} type="file" accept="application/pdf,.pdf" onChange={readInvoice}/><div className="page-title"><div><p className="eyebrow">CARTÃO DE CRÉDITO</p><h1>Compras no cartão</h1><p className="sub">Cada fatura é a soma das compras e parcelas vinculadas ao mesmo cartão.</p></div><div className="card-actions"><button className="secondary" disabled={importing} onClick={() => fileInputRef.current?.click()}><Download size={17}/>{importing ? 'Lendo fatura…' : 'Importar fatura'}</button><button className="primary" onClick={() => openModal('card-bill')}><Plus size={18}/>Nova compra no cartão</button></div></div>{importMessage && <div className={importing ? 'invoice-inline-loading' : 'login-error'}>{importing && <span className="mini-loader"/>}{importMessage}</div>}<div className="cards credit-summary"><Metric label="Fatura total" value={money(total)} icon={<CreditCard/>} tint="coral" detail={`${bills.length} lançamento${bills.length !== 1 ? 's' : ''} no cartão`}/><Metric label="Cartões ativos" value={String(cards.length)} icon={<CalendarDays/>} tint="purple" detail="Faturas calculadas por cartão"/></div><div className="card-invoice-list">{cards.map(card => <article className="panel card-invoice" key={card.name}><div><span>FATURA · {card.name}</span><strong>{money(card.total)}</strong></div><small>{card.bills.length} compra{card.bills.length !== 1 ? 's' : ''} lançada{card.bills.length !== 1 ? 's' : ''}</small></article>)}</div><article className="panel table-panel credit-table"><div className="table-head"><span>DESCRIÇÃO</span><span>TIPO</span><span>VENCIMENTO</span><span>RESPONSÁVEL</span><span>VALOR</span><span>STATUS</span><span/><span/></div>{bills.map(bill => { const person = finance.people.find(item => item.id === bill.responsible); return <div className="table-row" key={bill.id}><div><b>{bill.name}</b><small>{bill.cardName || 'Cartão de crédito'} · {bill.category}{bill.installments ? ` · ${bill.installments} parcela${bill.installments > 1 ? 's' : ''}` : ''}</small></div><span className={`tag ${bill.type === 'Fixa' ? 'fixed' : 'variable'}`}>{bill.type}</span><span>Dia {bill.dueDay}</span><span>{person?.name || '—'}</span><strong>{money(bill.value)}</strong><button className={bill.status === 'paid' ? 'status paid-status clickable' : 'status clickable'} onClick={() => finance.toggleBill(bill, period)}>{bill.status === 'paid' ? 'Pago' : 'Pendente'}</button><button className="edit" title="Editar lançamento" onClick={() => openModal({ type: 'edit-bill', bill })}><Pencil size={15}/></button><button className="delete" onClick={() => finance.remove('bills', bill.id)}><Trash2 size={16}/></button></div> })}{!bills.length && <Empty text="Nenhuma compra no cartão para este mês."/>}</article></section>
 }
 
-function CardInvoiceImportModal({ finance, onClose }) {
-  const [invoice, setInvoice] = useState(null)
-  const [fileName, setFileName] = useState('')
+function CardInvoiceReviewModal({ finance, initialReview, onClose }) {
+  const [invoice, setInvoice] = useState(initialReview.invoice)
+  const [fileName, setFileName] = useState(initialReview.fileName)
   const [loading, setLoading] = useState(false)
   const [reading, setReading] = useState({ current: 0, total: 0, label: '' })
   const [message, setMessage] = useState('')
-  const [cardName, setCardName] = useState('')
+  const [cardName, setCardName] = useState(initialReview.invoice.issuer)
   const [saving, setSaving] = useState(false)
   const readFile = async event => {
     const file = event.target.files?.[0]
