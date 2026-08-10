@@ -459,6 +459,7 @@ function Dashboard({ finance, displayName, current, offset, setOffset, openModal
   const cardInstallments = payables.filter(isCreditCardBill)
   const cardInvoiceTotal = cardInstallments.reduce((sum, bill) => sum + bill.value, 0)
   const cardInvoicePaid = cardInstallments.filter(bill => bill.status === 'paid').reduce((sum, bill) => sum + bill.value, 0)
+  const incomeDetail = `${receivables.length} conta${receivables.length !== 1 ? 's' : ''} a receber${finance.incomes.length ? ` · ${finance.incomes.length} recebimento${finance.incomes.length !== 1 ? 's' : ''} recorrente${finance.incomes.length !== 1 ? 's' : ''}` : ''}`
   const recurringIncome = finance.incomes.reduce((sum, item) => sum + item.value, 0)
   const income = recurringIncome + receivables.reduce((sum, bill) => sum + bill.value, 0)
   const expenses = payables.reduce((sum, bill) => sum + bill.value, 0)
@@ -482,7 +483,7 @@ function Dashboard({ finance, displayName, current, offset, setOffset, openModal
     <div className="page-title"><div><p className="eyebrow">PLANEJAMENTO FINANCEIRO</p><h1>Olá, {displayName}! Veja como está seu mês.</h1><p className="sub">Acompanhe suas contas e mantenha tudo sob controle.</p></div><button className="primary" onClick={() => openModal('bill')}><Plus size={18}/>Novo lançamento</button></div>
     <div className="month-control"><button onClick={() => setOffset(offset - 1)}><ChevronLeft size={18}/></button><div><CalendarDays size={17}/>{yearMonth}</div><button onClick={() => setOffset(offset + 1)}><ChevronRight size={18}/></button></div>
     <div className="cards">
-      <Metric label="Receitas do mês" value={money(income)} icon={<TrendingUp/>} tint="purple" detail={`${finance.incomes.length + receivables.length} conta${finance.incomes.length + receivables.length !== 1 ? 's' : ''} a receber`}/>
+      <Metric label="Receitas do mês" value={money(income)} icon={<TrendingUp/>} tint="purple" detail={incomeDetail}/>
       <Metric label="Contas a pagar" value={money(expenses)} icon={<TrendingDown/>} tint="coral" detail={`${payables.length} lançamento${payables.length !== 1 ? 's' : ''} · cartão: ${money(cardInvoiceTotal)}`}/>
       <Metric label="Fatura do cartão" value={money(cardInvoiceTotal)} icon={<CreditCard/>} tint="purple" detail={cardInstallments.length ? `${cardInstallments.length} parcela${cardInstallments.length !== 1 ? 's' : ''} ativa${cardInstallments.length !== 1 ? 's' : ''} · pago: ${money(cardInvoicePaid)}` : 'Nenhuma parcela ativa neste mês'}/>
       <Metric label="Saldo projetado" value={money(balance)} icon={<WalletCards/>} tint={balance < 0 ? 'coral' : 'green'} detail={balance >= 0 ? 'Disponível após as contas' : 'Atenção: saldo negativo'}/>
