@@ -21,6 +21,9 @@ create table if not exists public.bills (
   type text not null check (char_length(trim(type)) between 1 and 60),
   category text not null default 'Outros' check (char_length(trim(category)) between 1 and 60),
   responsible uuid references public.people(id) on delete set null,
+  installments smallint check (installments between 1 and 360),
+  start_period text check (start_period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  check ((installments is null) = (start_period is null)),
   created_at timestamptz not null default now()
 );
 

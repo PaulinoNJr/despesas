@@ -3,6 +3,14 @@
 
 alter table public.people add column if not exists owner_id uuid references auth.users(id) on delete cascade;
 alter table public.bills add column if not exists owner_id uuid references auth.users(id) on delete cascade;
+alter table public.bills add column if not exists installments smallint;
+alter table public.bills add column if not exists start_period text;
+alter table public.bills drop constraint if exists bills_installments_check;
+alter table public.bills drop constraint if exists bills_start_period_check;
+alter table public.bills drop constraint if exists bills_installment_period_check;
+alter table public.bills add constraint bills_installments_check check (installments between 1 and 360) not valid;
+alter table public.bills add constraint bills_start_period_check check (start_period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$') not valid;
+alter table public.bills add constraint bills_installment_period_check check ((installments is null) = (start_period is null)) not valid;
 
 create table if not exists public.income_payments (
   id uuid primary key default gen_random_uuid(),

@@ -10,6 +10,49 @@ const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Jul
 const today = new Date()
 const dateLabel = date => new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' }).format(new Date(`${date}T12:00:00`))
 const periodKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+const periodDate = period => {
+  const [year, month] = period.split('-').map(Number)
+  return new Date(year, month - 1, 1)
+}
+const isBillActiveInPeriod = (bill, period) => {
+  // Lançamentos antigos e aqueles sem número de parcelas continuam recorrentes.
+  if (!bill.installments || !bill.startPeriod) return true
+  const start = periodDate(bill.startPeriod)
+  const target = periodDate(period)
+  const monthsSinceStart = (target.getFullYear() - start.getFullYear()) * 12 + target.getMonth() - start.getMonth()
+  return monthsSinceStart >= 0 && monthsSinceStart < bill.installments
+}
+const dueDayForMonth = (date, dueDay) => Math.min(dueDay, new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate())
+const buildNotifications = finance => {
+  const notifications = []
+  const currentPeriod = periodKey(today)
+  const income = finance.incomes.reduce((sum, item) => sum + item.value, 0)
+  const currentBills = finance.bills.filter(bill => isBillActiveInPeriod(bill, currentPeriod))
+  const currentExpenses = currentBills.reduce((sum, bill) => sum + bill.value, 0)
+  const overdue = currentBills.filter(bill => finance.getStatus(bill, currentPeriod) !== 'paid' && dueDayForMonth(today, bill.dueDay) < today.getDate())
+
+  if (overdue.length) notifications.push({ id: `overdue:${currentPeriod}`, tone: 'danger', title: `${overdue.length} conta${overdue.length > 1 ? 's' : ''} em atraso`, text: `${money(overdue.reduce((sum, bill) => sum + bill.value, 0))} ainda precisa ser pago neste mês.` })
+
+  for (let offset = 0; offset <= 3; offset += 1) {
+    const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)
+    const period = periodKey(date)
+    finance.bills.filter(bill => isBillActiveInPeriod(bill, period) && finance.getStatus(bill, period) !== 'paid' && dueDayForMonth(date, bill.dueDay) === date.getDate()).forEach(bill => {
+      const when = offset === 0 ? 'vence hoje' : offset === 1 ? 'vence amanhã' : `vence em ${offset} dias`
+      notifications.push({ id: `due:${bill.id}:${period}`, tone: offset === 0 ? 'danger' : 'warning', title: `${bill.name} ${when}`, text: `${money(bill.value)} · vencimento em ${date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '')}.` })
+    })
+  }
+
+  if (income > 0 && currentExpenses > income) notifications.push({ id: `budget:over:${currentPeriod}`, tone: 'danger', title: 'Orçamento ultrapassado', text: `As contas somam ${money(currentExpenses - income)} a mais que suas receitas deste mês.` })
+  else if (income > 0 && currentExpenses / income >= 0.8) notifications.push({ id: `budget:attention:${currentPeriod}`, tone: 'warning', title: 'Orçamento quase no limite', text: `${Math.round((currentExpenses / income) * 100)}% das receitas deste mês já estão comprometidas.` })
+
+  currentBills.filter(bill => bill.installments && bill.startPeriod).forEach(bill => {
+    const start = periodDate(bill.startPeriod)
+    const monthsSinceStart = (today.getFullYear() - start.getFullYear()) * 12 + today.getMonth() - start.getMonth()
+    if (monthsSinceStart === bill.installments - 1) notifications.push({ id: `last-installment:${bill.id}:${currentPeriod}`, tone: 'good', title: 'Última parcela chegou', text: `${bill.name} sai do seu orçamento a partir do próximo mês.` })
+  })
+
+  return notifications
+}
 
 const seed = {
   people: [
@@ -63,7 +106,7 @@ function useFinance() {
         if (categories.length === 0) { categories = seed.categories.map(category => ({ ...category, id: crypto.randomUUID() })); await supabase.from('expense_categories').insert(categories) }
         if (types.length === 0) { types = seed.types.map(type => ({ ...type, id: crypto.randomUUID() })); await supabase.from('expense_types').insert(types) }
         const paymentMap = Object.fromEntries(payments.data.filter(p => p.status === 'paid').map(p => [`${p.bill_id}:${p.period}`, 'paid']))
-        setData({ people: people.data.map(p => ({ id: p.id, name: p.name, color: p.color })), incomes: incomes.data.map(i => ({ id: i.id, personId: i.person_id, value: Number(i.value), payDay: i.pay_day })), categories, types, bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible })), payments: paymentMap })
+        setData({ people: people.data.map(p => ({ id: p.id, name: p.name, color: p.color })), incomes: incomes.data.map(i => ({ id: i.id, personId: i.person_id, value: Number(i.value), payDay: i.pay_day })), categories, types, bills: bills.data.map(b => ({ id: b.id, name: b.name, value: Number(b.value), dueDay: b.due_day, type: b.type, category: b.category, responsible: b.responsible, installments: b.installments, startPeriod: b.start_period })), payments: paymentMap })
         setRemote(true)
         setConnectionError('')
       } else if (active) {
@@ -157,7 +200,7 @@ function useFinance() {
   }
   const addCategory = category => save({ ...data, categories: [...data.categories, category] }, { table: 'expense_categories', action: 'insert', payload: category })
   const addType = type => save({ ...data, types: [...data.types, type] }, { table: 'expense_types', action: 'insert', payload: type })
-  const addBill = bill => save({ ...data, bills: [...data.bills, bill] }, { table: 'bills', action: 'insert', payload: { id: bill.id, name: bill.name, value: bill.value, due_day: bill.dueDay, type: bill.type, category: bill.category, responsible: bill.responsible } })
+  const addBill = bill => save({ ...data, bills: [...data.bills, bill] }, { table: 'bills', action: 'insert', payload: { id: bill.id, name: bill.name, value: bill.value, due_day: bill.dueDay, type: bill.type, category: bill.category, responsible: bill.responsible, installments: bill.installments || null, start_period: bill.startPeriod || null } })
   const getStatus = (bill, period) => data.payments?.[`${bill.id}:${period}`] || 'pending'
   const toggleBill = async (bill, period) => {
     const key = `${bill.id}:${period}`
@@ -214,8 +257,27 @@ function App() {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const [monthOffset, setMonthOffset] = useState(0)
   const [modal, setModal] = useState(null)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [readNotifications, setReadNotifications] = useState([])
   const current = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
   const displayName = finance.user?.user_metadata?.display_name || finance.user?.email?.split('@')[0] || 'você'
+  const notificationStorageKey = `conta-clara-read-notifications-${finance.user?.id || 'local'}`
+  const notifications = useMemo(() => buildNotifications(finance), [finance])
+  const unreadCount = notifications.filter(notification => !readNotifications.includes(notification.id)).length
+  useEffect(() => {
+    try { setReadNotifications(JSON.parse(localStorage.getItem(notificationStorageKey)) || []) } catch { setReadNotifications([]) }
+  }, [notificationStorageKey])
+  const markNotificationAsRead = id => setReadNotifications(currentRead => {
+    if (currentRead.includes(id)) return currentRead
+    const nextRead = [...currentRead, id]
+    localStorage.setItem(notificationStorageKey, JSON.stringify(nextRead))
+    return nextRead
+  })
+  const markAllNotificationsAsRead = () => {
+    const nextRead = Array.from(new Set([...readNotifications, ...notifications.map(notification => notification.id)]))
+    setReadNotifications(nextRead)
+    localStorage.setItem(notificationStorageKey, JSON.stringify(nextRead))
+  }
   const navigate = target => { setPage(target); setMenuOpen(false) }
   const nav = [{ id: 'home', label: 'Visão geral', icon: Home }, { id: 'people', label: 'Cadastros', icon: Users }, { id: 'bills', label: 'Lançamentos', icon: LayoutList }, { id: 'categories', label: 'Categorias e tipos', icon: Tags }]
 
@@ -231,7 +293,7 @@ function App() {
     </aside>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
     <main>
-      <header><button className="menu-btn" onClick={() => setMenuOpen(true)}><Menu/></button><div className="mobile-title">conta<span>clara</span></div><div className="header-actions"><div className="sync-dot" title={finance.remote ? 'Sincronizado com Supabase' : finance.connectionError || 'Sincronizando'}>{finance.remote ? 'Supabase' : 'Conectando'}</div><button className="icon-button"><Bell size={19}/><i/></button></div></header>
+      <header><button className="menu-btn" onClick={() => setMenuOpen(true)}><Menu/></button><div className="mobile-title">conta<span>clara</span></div><div className="header-actions"><div className="notification-wrap"><button className="icon-button" title={unreadCount ? `${unreadCount} nova${unreadCount > 1 ? 's' : ''} mensagem${unreadCount > 1 ? 's' : ''}` : 'Notificações'} aria-label="Abrir notificações" onClick={() => setNotificationsOpen(open => !open)}><Bell size={19}/>{unreadCount > 0 && <i/>}</button>{notificationsOpen && <NotificationPanel notifications={notifications} readNotifications={readNotifications} onRead={markNotificationAsRead} onReadAll={markAllNotificationsAsRead}/>}</div></div></header>
       {page === 'home' && <Dashboard finance={finance} displayName={displayName} current={current} offset={monthOffset} setOffset={setMonthOffset} openModal={setModal}/>}
       {page === 'people' && <People finance={finance} openModal={setModal}/>}
       {page === 'bills' && <Bills finance={finance} openModal={setModal}/>}
@@ -239,16 +301,30 @@ function App() {
       {page === 'settings' && <SettingsPage finance={finance}/>}
     </main>
     {modal === 'person' && <PersonModal onClose={() => setModal(null)} onSave={person => { finance.addPerson(person); setModal(null) }}/>}
-    {modal === 'bill' && <BillModal people={finance.people} categories={finance.categories} types={finance.types} onClose={() => setModal(null)} onSave={bill => { finance.addBill(bill); setModal(null) }}/>}
+    {modal === 'bill' && (
+      <BillModal
+        people={finance.people}
+        categories={finance.categories}
+        types={finance.types}
+        initialPeriod={periodKey(current)}
+        onClose={() => setModal(null)}
+        onSave={bill => { finance.addBill(bill); setModal(null) }}
+      />
+    )}
     {modal?.type === 'income' && <IncomeModal person={modal.person} onClose={() => setModal(null)} onSave={income => { finance.addIncome(income); setModal(null) }}/>}
     {modal === 'category' && <CategoryModal onClose={() => setModal(null)} onSave={category => { finance.addCategory(category); setModal(null) }}/>}
     {modal === 'type' && <TypeModal onClose={() => setModal(null)} onSave={type => { finance.addType(type); setModal(null) }}/>}
   </div>
 }
 
+function NotificationPanel({ notifications, readNotifications, onRead, onReadAll }) {
+  const unreadCount = notifications.filter(notification => !readNotifications.includes(notification.id)).length
+  return <section className="notification-panel" aria-label="Notificações"><div className="notification-head"><div><strong>Notificações</strong><small>{unreadCount ? `${unreadCount} nova${unreadCount > 1 ? 's' : ''}` : 'Tudo lido'}</small></div>{unreadCount > 0 && <button type="button" onClick={onReadAll}>Marcar todas como lidas</button>}</div>{notifications.length ? <div className="notification-list">{notifications.map(notification => { const unread = !readNotifications.includes(notification.id); return <button type="button" key={notification.id} className={`notification-item ${unread ? 'unread' : 'read'}`} onClick={() => onRead(notification.id)}><span className={`notification-tone ${notification.tone}`}/><span><strong>{notification.title}</strong><small>{notification.text}</small></span>{unread && <i aria-label="Não lida"/>}</button> })}</div> : <div className="notification-empty"><strong>Nenhum alerta agora.</strong><span>Seu planejamento está em dia.</span></div>}</section>
+}
+
 function Dashboard({ finance, displayName, current, offset, setOffset, openModal }) {
   const period = periodKey(current)
-  const bills = finance.bills.map(b => ({ ...b, status: finance.getStatus(b, period) }))
+  const bills = finance.bills.filter(bill => isBillActiveInPeriod(bill, period)).map(b => ({ ...b, status: finance.getStatus(b, period) }))
   const income = finance.incomes.reduce((sum, item) => sum + item.value, 0)
   const expenses = bills.reduce((sum, b) => sum + b.value, 0)
   const paid = bills.filter(b => b.status === 'paid').reduce((sum, b) => sum + b.value, 0)
@@ -256,6 +332,14 @@ function Dashboard({ finance, displayName, current, offset, setOffset, openModal
   const balance = income - expenses
   const sorted = [...bills].sort((a,b) => a.dueDay - b.dueDay)
   const yearMonth = `${months[current.getMonth()]} ${current.getFullYear()}`
+  let accumulatedBalance = 0
+  const projection = Array.from({ length: finance.preferences.projectionMonths }, (_, index) => {
+    const date = new Date(current.getFullYear(), current.getMonth() + index, 1)
+    const monthExpenses = finance.bills.filter(bill => isBillActiveInPeriod(bill, periodKey(date))).reduce((sum, bill) => sum + bill.value, 0)
+    accumulatedBalance += income - monthExpenses
+    return { date, value: accumulatedBalance }
+  })
+  const largestProjection = Math.max(...projection.map(item => Math.abs(item.value)), 1)
   return <section className="content">
     <div className="page-title"><div><p className="eyebrow">PLANEJAMENTO FINANCEIRO</p><h1>Olá, {displayName}! Veja como está seu mês.</h1><p className="sub">Acompanhe suas contas e mantenha tudo sob controle.</p></div><button className="primary" onClick={() => openModal('bill')}><Plus size={18}/>Novo lançamento</button></div>
     <div className="month-control"><button onClick={() => setOffset(offset - 1)}><ChevronLeft size={18}/></button><div><CalendarDays size={17}/>{yearMonth}</div><button onClick={() => setOffset(offset + 1)}><ChevronRight size={18}/></button></div>
@@ -266,17 +350,17 @@ function Dashboard({ finance, displayName, current, offset, setOffset, openModal
     </div>
     <div className="dashboard-grid">
       <article className="panel upcoming"><div className="panel-head"><div><h2>Próximos vencimentos</h2><p>Organize-se para os próximos pagamentos</p></div><button className="text-button" onClick={() => openModal('bill')}>Adicionar</button></div>
-        <div className="bill-list">{sorted.slice(0,5).map(b => <BillRow key={b.id} bill={b} person={finance.people.find(p => p.id === b.responsible)} onToggle={() => finance.toggleBill(b, period)}/>)}</div>
+        <div className="bill-list">{sorted.slice(0,5).map(b => <BillRow key={b.id} bill={b} person={finance.people.find(p => p.id === b.responsible)} month={current} onToggle={() => finance.toggleBill(b, period)}/>)}</div>
         {sorted.length === 0 && <Empty text="Nenhuma conta cadastrada ainda."/>}
       </article>
       <article className="panel progress-panel"><div className="panel-head"><div><h2>Andamento do mês</h2><p>Você já pagou {money(paid)} em contas</p></div><span className="percentage">{expenses ? Math.round((paid/expenses)*100) : 0}%</span></div><div className="progress"><span style={{width: `${expenses ? Math.min((paid/expenses)*100, 100) : 0}%`}}/></div><div className="progress-label"><span>Pago</span><strong>{money(paid)}</strong></div><div className="progress-label"><span>Falta pagar</span><strong>{money(remaining)}</strong></div><hr/><div className="small-stats"><div><span>Contas pagas</span><b>{bills.filter(b=>b.status==='paid').length}</b></div><div><span>Pendentes</span><b>{bills.filter(b=>b.status!=='paid').length}</b></div></div></article>
     </div>
-    <article className="panel projection"><div className="panel-head"><div><h2>Projeção dos próximos meses</h2><p>Estimativa baseada nas receitas e contas recorrentes cadastradas</p></div></div><div className="projection-bars">{Array.from({ length: finance.preferences.projectionMonths }, (_, i) => i).map(i => { const d = new Date(today.getFullYear(), today.getMonth()+i, 1); const future = balance * (i+1); return <div className="bar-col" key={i}><div className="bar-value">{money(future)}</div><div className="bar-track"><span style={{height: `${Math.max(22, Math.min(100, 22 + i*14))}%`}}/></div><small>{months[d.getMonth()].slice(0,3)}</small></div>})}</div></article>
+    <article className="panel projection"><div className="panel-head"><div><h2>Projeção dos próximos meses</h2><p>Saldo acumulado com receitas, contas recorrentes e parcelas ainda ativas.</p></div></div><div className="projection-bars">{projection.map(item => <div className="bar-col" key={periodKey(item.date)}><div className="bar-value">{money(item.value)}</div><div className="bar-track"><span className={item.value < 0 ? 'negative' : ''} style={{height: `${Math.max(8, Math.round((Math.abs(item.value) / largestProjection) * 100))}%`}}/></div><small>{months[item.date.getMonth()].slice(0,3)}</small></div>)}</div></article>
   </section>
 }
 
 function Metric({ label, value, icon, tint, detail }) { return <article className="metric"><div className={`metric-icon ${tint}`}>{icon}</div><p>{label}</p><h2>{value}</h2><small>{detail}</small></article> }
-function BillRow({ bill, person, onToggle }) { return <div className="bill-row"><button aria-label="Marcar pagamento" onClick={onToggle} className={bill.status === 'paid' ? 'check paid' : 'check'}>{bill.status === 'paid' && '✓'}</button><div className="due-date"><b>{String(bill.dueDay).padStart(2,'0')}</b><span>{today.toLocaleDateString('pt-BR', {month:'short'}).replace('.','')}</span></div><div className="bill-info"><strong>{bill.name}</strong><span>{bill.category} {person ? `· ${person.name}` : ''}</span></div><strong className={bill.status === 'paid' ? 'paid-value' : ''}>{money(bill.value)}</strong><span className={bill.status === 'paid' ? 'status paid-status' : 'status'}>{bill.status === 'paid' ? 'Pago' : 'Pendente'}</span></div> }
+function BillRow({ bill, person, month, onToggle }) { return <div className="bill-row"><button aria-label="Marcar pagamento" onClick={onToggle} className={bill.status === 'paid' ? 'check paid' : 'check'}>{bill.status === 'paid' && '✓'}</button><div className="due-date"><b>{String(bill.dueDay).padStart(2,'0')}</b><span>{month.toLocaleDateString('pt-BR', {month:'short'}).replace('.','')}</span></div><div className="bill-info"><strong>{bill.name}</strong><span>{bill.category} {person ? `· ${person.name}` : ''}</span></div><strong className={bill.status === 'paid' ? 'paid-value' : ''}>{money(bill.value)}</strong><span className={bill.status === 'paid' ? 'status paid-status' : 'status'}>{bill.status === 'paid' ? 'Pago' : 'Pendente'}</span></div> }
 function Empty({ text }) { return <div className="empty">{text}</div> }
 
 function People({ finance, openModal }) {
@@ -365,7 +449,7 @@ function PasswordCard({ changePassword }) {
 function Bills({ finance, openModal }) {
   const [filter, setFilter] = useState('Todos')
   const period = periodKey(today)
-  const bills = finance.bills.map(b => ({ ...b, status: finance.getStatus(b, period) })).filter(b => filter === 'Todos' || b.type === filter)
+  const bills = finance.bills.filter(bill => isBillActiveInPeriod(bill, period)).map(b => ({ ...b, status: finance.getStatus(b, period) })).filter(b => filter === 'Todos' || b.type === filter)
   return <section className="content"><div className="page-title"><div><p className="eyebrow">LANÇAMENTOS</p><h1>Contas e dívidas</h1><p className="sub">Registre suas despesas fixas e os valores que variam a cada mês.</p></div><button className="primary" onClick={() => openModal('bill')}><Plus size={18}/>Novo lançamento</button></div><div className="filters">{['Todos', ...finance.types.map(type => type.name)].map(item => <button key={item} onClick={() => setFilter(item)} className={filter === item ? 'selected' : ''}>{item === 'Todos' ? 'Todos os lançamentos' : item}</button>)}</div><article className="panel table-panel"><div className="table-head"><span>DESCRIÇÃO</span><span>TIPO</span><span>VENCIMENTO</span><span>RESPONSÁVEL</span><span>VALOR</span><span>STATUS</span><span/></div>{bills.map(b => { const p=finance.people.find(x=>x.id===b.responsible); return <div className="table-row" key={b.id}><div><b>{b.name}</b><small>{b.category}</small></div><span className={`tag ${b.type === 'Fixa' ? 'fixed' : 'variable'}`}>{b.type}</span><span>Dia {b.dueDay}</span><span>{p?.name || '—'}</span><strong>{money(b.value)}</strong><button className={b.status === 'paid' ? 'status paid-status clickable' : 'status clickable'} onClick={() => finance.toggleBill(b, period)}>{b.status === 'paid' ? 'Pago' : 'Pendente'}</button><button className="delete" onClick={() => finance.remove('bills', b.id)}><Trash2 size={16}/></button></div>})}{bills.length === 0 && <Empty text="Nenhum lançamento neste filtro."/>}</article></section>
 }
 
@@ -398,7 +482,15 @@ function IncomeModal({ person, onClose, onSave }) {
 }
 function CategoryModal({ onClose, onSave }) { const [form, setForm] = useState({ name: '', color: '#7067cf' }); const submit = event => { event.preventDefault(); if (!form.name.trim()) return; onSave({ id: crypto.randomUUID(), name: form.name.trim(), color: form.color }) }; return <Modal title="Nova categoria" onClose={onClose}><form onSubmit={submit}><label>Nome da categoria<input autoFocus required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Ex.: Transporte"/></label><label>Cor de identificação<input className="color-input" type="color" value={form.color} onChange={event => setForm({ ...form, color: event.target.value })}/></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar categoria</button></div></form></Modal> }
 function TypeModal({ onClose, onSave }) { const [name, setName] = useState(''); const submit = event => { event.preventDefault(); if (!name.trim()) return; onSave({ id: crypto.randomUUID(), name: name.trim() }) }; return <Modal title="Novo tipo" onClose={onClose}><form onSubmit={submit}><label>Nome do tipo<input autoFocus required value={name} onChange={event => setName(event.target.value)} placeholder="Ex.: Parcelada"/></label><p className="modal-note">Use tipos para diferenciar despesas fixas, variáveis ou qualquer outra regra que fizer sentido.</p><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar tipo</button></div></form></Modal> }
-function BillModal({ people, categories, types, onClose, onSave }) { const [form,setForm]=useState({name:'',value:'',dueDay:'10',type:types[0]?.name || '',category:categories[0]?.name || '',responsible:people[0]?.id || ''}); const submit=e=>{e.preventDefault(); if(!form.name || !form.value || !form.type || !form.category) return; onSave({...form,id:crypto.randomUUID(),value:Number(form.value),dueDay:Number(form.dueDay),status:'pending'})}; return <Modal title="Novo lançamento" onClose={onClose}><form onSubmit={submit}><label>Descrição<input autoFocus required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Ex.: Conta de água"/></label><div className="form-row"><label>Valor<CurrencyInput required value={form.value} onValueChange={value => setForm({...form,value})} placeholder="R$ 0,00"/></label><label>Vencimento<input required min="1" max="31" type="number" value={form.dueDay} onChange={e=>setForm({...form,dueDay:e.target.value})}/></label></div><div className="form-row"><label>Tipo<select required value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>{types.map(type => <option key={type.id} value={type.name}>{type.name}</option>)}</select></label><label>Categoria<select required value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{categories.map(category => <option key={category.id} value={category.name}>{category.name}</option>)}</select></label></div><label>Responsável<select value={form.responsible} onChange={e=>setForm({...form,responsible:e.target.value})}><option value="">Não definido</option>{people.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar lançamento</button></div></form></Modal> }
+function BillModal({ people, categories, types, initialPeriod, onClose, onSave }) {
+  const [form, setForm] = useState({ name: '', value: '', dueDay: '10', type: types[0]?.name || '', category: categories[0]?.name || '', responsible: people[0]?.id || '', installments: '', startPeriod: initialPeriod })
+  const submit = event => {
+    event.preventDefault()
+    if (!form.name || !form.value || !form.type || !form.category) return
+    onSave({ ...form, id: crypto.randomUUID(), value: Number(form.value), dueDay: Number(form.dueDay), installments: form.installments ? Number(form.installments) : null, startPeriod: form.installments ? form.startPeriod : null, status: 'pending' })
+  }
+  return <Modal title="Novo lançamento" onClose={onClose}><form onSubmit={submit}><label>Descrição<input autoFocus required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Ex.: Compra no cartão"/></label><div className="form-row"><label>Valor de cada parcela<CurrencyInput required value={form.value} onValueChange={value => setForm({ ...form, value })} placeholder="R$ 0,00"/></label><label>Vencimento<input required min="1" max="31" type="number" value={form.dueDay} onChange={event => setForm({ ...form, dueDay: event.target.value })}/></label></div><div className="form-row"><label>Tipo<select required value={form.type} onChange={event => setForm({ ...form, type: event.target.value })}>{types.map(type => <option key={type.id} value={type.name}>{type.name}</option>)}</select></label><label>Categoria<select required value={form.category} onChange={event => setForm({ ...form, category: event.target.value })}>{categories.map(category => <option key={category.id} value={category.name}>{category.name}</option>)}</select></label></div><div className="form-row"><label>Quantidade de parcelas <small>(vazio = recorrente)</small><input min="1" max="360" type="number" value={form.installments} onChange={event => setForm({ ...form, installments: event.target.value })} placeholder="Ex.: 12"/></label><label>Primeira parcela<input disabled={!form.installments} required={Boolean(form.installments)} type="month" value={form.startPeriod} onChange={event => setForm({ ...form, startPeriod: event.target.value })}/></label></div><label>Responsável<select value={form.responsible} onChange={event => setForm({ ...form, responsible: event.target.value })}><option value="">Não definido</option>{people.map(person => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label><p className="modal-note">Para compras no cartão, informe as parcelas. A projeção deixa de somar o valor após a última parcela.</p><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancelar</button><button className="primary">Salvar lançamento</button></div></form></Modal>
+}
 
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
 createRoot(document.getElementById('root')).render(<App />)
