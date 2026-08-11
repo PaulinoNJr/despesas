@@ -135,7 +135,19 @@ create table if not exists public.credit_card_invoices (
   unique (family_id, invoice_key)
 );
 
+-- Cartões são cadastrados uma vez; as compras apontam para esse cadastro.
+create table if not exists public.credit_cards (
+  id uuid primary key,
+  family_id uuid not null references public.families(id) on delete cascade,
+  owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  name text not null check (char_length(trim(name)) between 1 and 80),
+  due_day smallint not null check (due_day between 1 and 31),
+  created_at timestamptz not null default now(),
+  unique (family_id, name)
+);
+
 alter table public.bills add column if not exists card_invoice_id uuid references public.credit_card_invoices(id) on delete set null;
+alter table public.bills add column if not exists card_id uuid references public.credit_cards(id) on delete set null;
 alter table public.bills drop constraint if exists bills_value_check;
 alter table public.bills add constraint bills_value_check check (value >= 0 or is_credit_card) not valid;
 
@@ -347,6 +359,7 @@ alter table public.families enable row level security;
 alter table public.family_members enable row level security;
 alter table public.family_invites enable row level security;
 alter table public.credit_card_invoices enable row level security;
+alter table public.credit_cards enable row level security;
 
 alter table public.people force row level security;
 alter table public.bills force row level security;
@@ -359,6 +372,7 @@ alter table public.families force row level security;
 alter table public.family_members force row level security;
 alter table public.family_invites force row level security;
 alter table public.credit_card_invoices force row level security;
+alter table public.credit_cards force row level security;
 
 revoke all on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments, public.audit_logs from anon;
 grant select, insert, update, delete on table public.people, public.bills, public.income_payments, public.expense_categories, public.expense_types, public.bill_payments, public.audit_logs to authenticated;
@@ -366,6 +380,8 @@ revoke all on table public.families, public.family_members, public.family_invite
 grant select on table public.families, public.family_members, public.family_invites to authenticated;
 revoke all on table public.credit_card_invoices from anon;
 grant select, insert, delete on table public.credit_card_invoices to authenticated;
+revoke all on table public.credit_cards from anon;
+grant select, insert, update, delete on table public.credit_cards to authenticated;
 
 drop policy if exists "people_owner_only" on public.people;
 drop policy if exists "bills_owner_only" on public.bills;
@@ -378,6 +394,7 @@ drop policy if exists "family_visible_to_members" on public.families;
 drop policy if exists "family_members_visible_to_family" on public.family_members;
 drop policy if exists "family_invites_visible_to_family" on public.family_invites;
 drop policy if exists "credit_card_invoices_visible_to_family" on public.credit_card_invoices;
+drop policy if exists "credit_cards_visible_to_family" on public.credit_cards;
 
 create policy "people_owner_only" on public.people
   for all to authenticated
@@ -449,6 +466,29 @@ create policy "credit_card_invoices_visible_to_family" on public.credit_card_inv
   using (family_id = public.current_family_id())
   with check (family_id = public.current_family_id() and public.can_access_family_owner(owner_id));
 
+create policy "credit_cards_visible_to_family" on public.credit_cards
+  for all to authenticated
+  using (family_id = public.current_family_id())
+  with check (family_id = public.current_family_id() and public.can_access_family_owner(owner_id));
+
+-- Vincula lançamentos de cartão já existentes ao novo cadastro sem descartá-los.
+insert into public.credit_cards (id, family_id, owner_id, name, due_day)
+select gen_random_uuid(), member.family_id, bill.owner_id, bill.card_name, min(bill.due_day)
+from public.bills bill
+join public.family_members member on member.user_id = bill.owner_id
+where bill.is_credit_card = true and bill.card_name is not null
+group by member.family_id, bill.owner_id, bill.card_name
+on conflict (family_id, name) do nothing;
+
+update public.bills bill
+set card_id = card.id
+from public.credit_cards card
+join public.family_members member on member.family_id = card.family_id
+where bill.card_id is null
+  and bill.is_credit_card = true
+  and bill.card_name = card.name
+  and member.user_id = bill.owner_id;
+
 revoke all on function public.can_access_family_owner(uuid) from public;
 revoke all on function public.current_family_id() from public;
 revoke all on function public.create_family_invitation(text) from public;
@@ -469,4 +509,6 @@ create index if not exists family_members_family_id_idx on public.family_members
 create index if not exists family_invites_family_id_idx on public.family_invites(family_id);
 create index if not exists family_invites_email_idx on public.family_invites(email);
 create index if not exists bills_card_invoice_id_idx on public.bills(card_invoice_id);
+create index if not exists bills_card_id_idx on public.bills(card_id);
 create index if not exists credit_card_invoices_family_id_idx on public.credit_card_invoices(family_id);
+create index if not exists credit_cards_family_id_idx on public.credit_cards(family_id);
