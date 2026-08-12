@@ -72,6 +72,9 @@ header { height: 75px; display:flex; align-items:center; justify-content:flex-en
 }
 @media(max-height:560px) and (orientation:landscape){.modal{max-height:100dvh;border-radius:0}.auth-page{align-items:center}.auth-card{margin:0;max-height:94dvh;overflow:auto}.auth-orb{display:none}}
 .delete-import{display:inline-flex;align-items:center;gap:5px;margin-top:11px;padding:5px 0;color:#cf5c53;background:transparent;font-size:10px;font-weight:700}.delete-import:hover{color:#a9443b}.delete-import:disabled{opacity:.55;cursor:wait}
+.row-actions{position:relative;grid-column:7 / -1;justify-self:end}.action-menu{width:34px;height:34px;display:grid;place-items:center;border-radius:7px;background:transparent;color:#7067cf}.action-menu:hover,.action-menu[aria-expanded="true"]{background:#efeffc;color:#554cac}.action-popover{position:absolute;right:0;top:calc(100% + 5px);z-index:12;min-width:122px;padding:5px;background:#fff;border:1px solid #e6e8f1;border-radius:8px;box-shadow:0 10px 24px #18214324}.action-popover button{width:100%;display:flex;align-items:center;gap:7px;padding:8px;border-radius:5px;background:transparent;color:#505a76;font-size:11px;font-weight:600;text-align:left}.action-popover button:hover{background:#f4f3fd;color:#5d55af}.action-popover .danger:hover{background:#fff0ed;color:#c96351}
+.table-panel{overflow:visible}
+@media(max-width:850px){.row-actions{grid-column:4 / -1}}
 
 /* Mobile-first hardening: evita que componentes largos obriguem zoom ou rolagem lateral. */
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
@@ -85,6 +88,8 @@ button,input,select,textarea{min-width:0}
   header{position:sticky;top:0;z-index:10;min-height:60px;height:calc(60px + env(safe-area-inset-top));padding:max(0px,env(safe-area-inset-top)) 16px 0;background:#f7f8fcf5}
   .menu-btn,.icon-button{width:42px;height:42px;display:grid;place-items:center}
   .content{width:100%;max-width:none;padding-left:16px;padding-right:16px}
+  .filters{overflow:visible;flex-wrap:wrap;margin:21px 0 14px;padding:0;gap:7px}
+  .filters button{white-space:nowrap;min-height:38px}
   .page-title,.panel-head{flex-wrap:wrap}
   .page-title>.primary{flex:1 0 100%}
   .card-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;margin-top:18px}
@@ -101,6 +106,7 @@ button,input,select,textarea{min-width:0}
   .table-row .status{display:block!important;grid-column:2 / span 3;grid-row:3;align-self:center}
   .table-row .edit{position:static!important;display:grid;grid-column:3;grid-row:1;padding:4px;place-items:center;align-self:start}
   .table-row .delete{position:static!important;display:grid;grid-column:4;grid-row:1;padding:4px;place-items:center;align-self:start}
+  .row-actions{grid-column:4;grid-row:1;align-self:start}
   .modal-backdrop{align-items:end;padding:0}
   .modal{width:100%;max-height:94dvh;overflow-y:auto;border-radius:16px 16px 0 0}
   .modal-head{position:sticky;top:0;z-index:1;background:#fff}
