@@ -22,10 +22,10 @@ create table if not exists public.bills (
   responsible uuid references public.people(id) on delete set null,
   installments smallint check (installments between 1 and 360),
   start_period text check (start_period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  is_recurring boolean not null default true,
   flow text not null default 'payable' check (flow in ('payable', 'receivable')),
   is_credit_card boolean not null default false,
   card_name text check (char_length(trim(card_name)) between 1 and 80),
-  check ((installments is null) = (start_period is null)),
   created_at timestamptz not null default now()
 );
 
@@ -33,6 +33,7 @@ alter table public.people add column if not exists owner_id uuid references auth
 alter table public.bills add column if not exists owner_id uuid references auth.users(id) on delete cascade;
 alter table public.bills add column if not exists installments smallint;
 alter table public.bills add column if not exists start_period text;
+alter table public.bills add column if not exists is_recurring boolean not null default true;
 alter table public.bills add column if not exists flow text not null default 'payable';
 alter table public.bills add column if not exists is_credit_card boolean not null default false;
 alter table public.bills add column if not exists card_name text;
@@ -41,7 +42,6 @@ alter table public.bills drop constraint if exists bills_start_period_check;
 alter table public.bills drop constraint if exists bills_installment_period_check;
 alter table public.bills add constraint bills_installments_check check (installments between 1 and 360) not valid;
 alter table public.bills add constraint bills_start_period_check check (start_period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$') not valid;
-alter table public.bills add constraint bills_installment_period_check check ((installments is null) = (start_period is null)) not valid;
 alter table public.bills drop constraint if exists bills_flow_check;
 alter table public.bills add constraint bills_flow_check check (flow in ('payable', 'receivable')) not valid;
 
